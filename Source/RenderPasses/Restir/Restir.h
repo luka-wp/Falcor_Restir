@@ -25,84 +25,52 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-#include "SampleAppTemplate.h"
+#pragma once
+#include "Falcor.h"
+#include "Core/Pass/RasterPass.h"
+#include "RenderGraph/RenderPass.h"
 
-FALCOR_EXPORT_D3D12_AGILITY_SDK
+using namespace Falcor;
 
-uint32_t mSampleGuiWidth = 250;
-uint32_t mSampleGuiHeight = 200;
-uint32_t mSampleGuiPositionX = 20;
-uint32_t mSampleGuiPositionY = 40;
-
-SampleAppTemplate::SampleAppTemplate(const SampleAppConfig& config)
-    : SampleApp(config)
+class Restir : public RenderPass
 {
-    //
-}
+public:
+    FALCOR_PLUGIN_CLASS(Restir, "Restir", "Insert pass description here.");
 
-SampleAppTemplate::~SampleAppTemplate()
-{
-    //
-}
-
-void SampleAppTemplate::onLoad(RenderContext* pRenderContext)
-{
-    //
-}
-
-void SampleAppTemplate::onShutdown()
-{
-    //
-}
-
-void SampleAppTemplate::onResize(uint32_t width, uint32_t height)
-{
-    //
-}
-
-void SampleAppTemplate::onFrameRender(RenderContext* pRenderContext, const ref<Fbo>& pTargetFbo)
-{
-    const float4 clearColor(0.38f, 0.52f, 0.10f, 1);
-    pRenderContext->clearFbo(pTargetFbo.get(), clearColor, 1.0f, 0, FboAttachmentType::All);
-}
-
-void SampleAppTemplate::onGuiRender(Gui* pGui)
-{
-    Gui::Window w(pGui, "Falcor", {250, 200});
-    renderGlobalUI(pGui);
-    w.text("Hello from SampleAppTemplate");
-    if (w.button("Click Here"))
+    static ref<Restir> create(ref<Device> pDevice, const Properties& props)
     {
-        msgBox("Info", "Now why would you do that?");
+        return make_ref<Restir>(pDevice, props);
     }
-}
 
-bool SampleAppTemplate::onKeyEvent(const KeyboardEvent& keyEvent)
-{
-    return false;
-}
+    Restir(ref<Device> pDevice, const Properties& props);
 
-bool SampleAppTemplate::onMouseEvent(const MouseEvent& mouseEvent)
-{
-    return false;
-}
+    virtual Properties getProperties() const override;
+    virtual RenderPassReflection reflect(const CompileData& compileData) override;
+    virtual void compile(RenderContext* pRenderContext, const CompileData& compileData) override {}
+    virtual void execute(RenderContext* pRenderContext, const RenderData& renderData) override;
+    virtual void renderUI(Gui::Widgets& widget) override;
+    virtual void setScene(RenderContext* pRenderContext, const ref<Scene>& pScene) override;
+    virtual bool onMouseEvent(const MouseEvent& mouseEvent) override { return false; }
+    virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
-void SampleAppTemplate::onHotReload(HotReloadFlags reloaded)
-{
-    //
-}
+private:
+    void parseProperties(const Properties& props);
+    void prepareVars();
 
-int runMain(int argc, char** argv)
-{
-    SampleAppConfig config;
-    config.windowDesc.title = "Falcor Project Template";
-    config.windowDesc.resizableWindow = true;
+private:
 
-    SampleAppTemplate project(config);
-    return project.run();
-}
+    ref<Scene> mpScene;
+    ref<SampleGenerator> mpSampleGenerator;
 
-int main(int argc, char** argv)
-{
-    return catchAndReportAllExceptions([&]() { return runMain(argc, argv); });
-}
+    struct
+    {
+        ref<Program> pProgram;
+        ref<RtBindingTable> pBindingTable;
+        ref<RtProgramVars> pVars;
+    } mTracer;
+
+    //ref<Program> mpProgram;
+    //ref<GraphicsState> mpGraphicsState;
+    //ref<RasterizerState> mpRasterizerState;
+    //ref<ProgramVars> mpVars;
+};
