@@ -1,0 +1,11 @@
+add_plugin(RestirInitTemporal)
+
+target_sources(RestirInitTemporal PRIVATE
+    RestirInitTemporal.cpp
+    RestirInitTemporal.h
+    RestirInitTemporal.rt.slang
+)
+
+target_copy_shaders(RestirInitTemporal RenderPasses/RestirInitTemporal)
+
+target_source_group(RestirInitTemporal "RenderPasses")

@@ -25,56 +25,66 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-#include "Restir.h"
+#include "RestirInitTemporal.h"
 
-#include "Core/API/RasterizerState.h"
-#include "Core/Pass/RasterPass.h"
 #include "RenderGraph/RenderPassHelpers.h"
 
 namespace
 {
-//const char* kShaderFileName = "RenderPasses/Restir/Restir.slang";
-const char* kRtShaderFile = "RenderPasses/Restir/Restir.rt.slang";
+const char* kShaderFile = "RenderPasses/RestirInitTemporal/RestirInitTemporal.rt.slang";
 
 const uint32_t kMaxPayloadSizeBytes = 72u;
 const uint32_t kMaxRecursionDepth = 2u;
 
+const char* kEntryRayGen = "rayGen";
+
+const char* kEntryShadowMiss = "shadowMiss";
+const char* kEntryShadowAnyHit = "shadowAnyHit";
+const char* kEntryShadowClosestHit = "shadowClosestHit";
+
+const char* kEntryIndirectMiss = "indirectMiss";
+const char* kEntryIndirectAnyHit = "indirectAnyHit";
+const char* kEntryIndirectClosestHit = "indirectClosestHit";
+
 const ChannelList kInputChannels = {
     {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
-    {"viewW", "gViewW", "World-space view direction (xyz float format)", true}
-};
+    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
+    {"motionVector", "gMotionVector", "Screen space motion vector"}};
 
-const ChannelList kOutputChannels = {{"color", "gOutputColor", "Output color", false, ResourceFormat::RGBA32Float}};
+
+const char* kReservoirCurrent = "reservoirCurrent";
+const char* kReservoirPrevious = "reservoirPrevious";
+const ChannelList kOutputChannels = {
+    {kReservoirCurrent, "gReservoirCurrent", "Current reservoir state"},
+    {kReservoirPrevious, "gReservoirPrevious", "Previous reservoir state"}
+};
 }; // namespace
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
 {
-    registry.registerClass<RenderPass, Restir>();
+    registry.registerClass<RenderPass, RestirInitTemporal>();
 }
 
-Restir::Restir(ref<Device> pDevice, const Properties& props)
+RestirInitTemporal::RestirInitTemporal(ref<Device> pDevice, const Properties& props)
     : RenderPass(pDevice)
 {
-    parseProperties(props);
     mpSampleGenerator = SampleGenerator::create(mpDevice, SAMPLE_GENERATOR_UNIFORM);
 }
 
-Properties Restir::getProperties() const
+Properties RestirInitTemporal::getProperties() const
 {
-    Properties props;
-    return props;
+    return {};
 }
 
-RenderPassReflection Restir::reflect(const CompileData& compileData)
+RenderPassReflection RestirInitTemporal::reflect(const CompileData& compileData)
 {
-    // Define the required resources here
     RenderPassReflection reflector;
     addRenderPassInputs(reflector, kInputChannels);
     addRenderPassOutputs(reflector, kOutputChannels);
     return reflector;
 }
 
-void Restir::execute(RenderContext* pRenderContext, const RenderData& renderData)
+void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData& renderData)
 {
     if (!mpScene)
     {
@@ -94,14 +104,6 @@ void Restir::execute(RenderContext* pRenderContext, const RenderData& renderData
         mpScene->getLightCollection(pRenderContext);
     }
 
-    mTracer.pProgram->addDefine("MAX_BOUNCES", std::to_string(mMaxBounces));
-    //mTracer.pProgram->addDefine("COMPUTE_DIRECT", mComputeDirect ? "1" : "0");
-    //mTracer.pProgram->addDefine("USE_IMPORTANCE_SAMPLING", mUseImportanceSampling ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_ANALYTIC_LIGHTS", mpScene->useAnalyticLights() ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_EMISSIVE_LIGHTS", mpScene->useEmissiveLights() ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_ENV_LIGHT", mpScene->useEnvLight() ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_ENV_BACKGROUND", mpScene->useEnvBackground() ? "1" : "0");
-
     mTracer.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
     mTracer.pProgram->addDefines(getValidResourceDefines(kOutputChannels, renderData));
 
@@ -112,6 +114,7 @@ void Restir::execute(RenderContext* pRenderContext, const RenderData& renderData
 
     ShaderVar var = mTracer.pVars->getRootVar();
     var["CB"]["gFrameCount"] = mFrameCount;
+    var["CB"]["gInitLights"] = mInitLights;
 
     auto bind = [&](const ChannelDesc& desc)
     {
@@ -121,70 +124,99 @@ void Restir::execute(RenderContext* pRenderContext, const RenderData& renderData
         }
     };
     for (auto channel : kInputChannels)
-    {
         bind(channel);
-    }
     for (auto channel : kOutputChannels)
-    {
         bind(channel);
-    }
 
-    const uint2 targetDim = renderData.getDefaultTextureDims();
-    mpScene->raytrace(pRenderContext, mTracer.pProgram.get(), mTracer.pVars, uint3(targetDim, 1));
-
+    mInitLights = false;
     ++mFrameCount;
 }
 
-void Restir::renderUI(Gui::Widgets& widget)
+void RestirInitTemporal::renderUI(Gui::Widgets& widget)
 {
 }
 
-void Restir::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
+void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
+    mpScene = pScene;
+
     mTracer.pProgram = nullptr;
     mTracer.pBindingTable = nullptr;
     mTracer.pVars = nullptr;
-
-    mpScene = pScene;
+    mInitLights = true;
 
     if (mpScene)
     {
         ProgramDesc desc;
         desc.addShaderModules(mpScene->getShaderModules());
-        desc.addShaderLibrary(kRtShaderFile);
+        desc.addShaderLibrary(kShaderFile);
+
         desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
         desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
         desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
-        //desc.setMaxTraceRecursionDepth()
 
-        mTracer.pBindingTable = RtBindingTable::create(2, 2, mpScene->getGeometryCount());
-        ref<RtBindingTable>& sbt = mTracer.pBindingTable;
-        sbt->setRayGen(desc.addRayGen("rayGen"));
-        sbt->setMiss(0, desc.addMiss("scatterMiss"));
-        sbt->setMiss(1, desc.addMiss("shadowMiss"));
+        mTracer.pBindingTable = RtBindingTable::create(
+            2,
+            2,
+            mpScene->getGeometryCount());
 
-        sbt->setHitGroup(
+        ref<RtBindingTable>& bindingTable = mTracer.pBindingTable;
+        bindingTable->setRayGen(
+            desc.addRayGen(kEntryRayGen)
+        );
+        bindingTable->setMiss(
+            0,
+            desc.addMiss(kEntryShadowMiss)
+        );
+        bindingTable->setMiss(
+            1,
+            desc.addMiss(kEntryIndirectMiss)
+        );
+        bindingTable->setHitGroup(
             0,
             mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh),
-            desc.addHitGroup("scatterTriangleMeshClosestHit", "scatterTriangleMeshAnyHit")
+            desc.addHitGroup(kEntryShadowClosestHit, kEntryShadowAnyHit)
         );
-        sbt->setHitGroup(
+        bindingTable->setHitGroup(
             1,
             mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh),
-            desc.addHitGroup("", "shadowTriangleMeshAnyHit"));
+            desc.addHitGroup(kEntryIndirectClosestHit, kEntryIndirectAnyHit)
+        );
 
         mTracer.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
     }
 }
 
-void Restir::parseProperties(const Properties& props)
+void RestirInitTemporal::allocateReservoir(int bufferX, int bufferY)
 {
-    for (const auto& [key, value] : props)
+    bool allocate = mpReservoirPrevious == nullptr || mpReservoirCurrent == nullptr;
+    allocate = allocate || mpReservoirPrevious->getWidth() != bufferX || mpReservoirPrevious->getHeight() != bufferY;
+
+    if (allocate)
     {
+        mpReservoirPrevious = mpDevice->createTexture2D(
+            bufferX,
+            bufferY,
+            ResourceFormat::RGBA32Float,
+            1,
+            1,
+            nullptr,
+            ResourceBindFlags::UnorderedAccess
+        );
+
+        mpReservoirCurrent = mpDevice->createTexture2D(
+            bufferX,
+            bufferY,
+            ResourceFormat::RGBA32Float,
+            1,
+            1,
+            nullptr,
+            ResourceBindFlags::UnorderedAccess
+        );
     }
 }
 
-void Restir::prepareVars()
+void RestirInitTemporal::prepareVars()
 {
     mTracer.pProgram->addDefines(mpSampleGenerator->getDefines());
     mTracer.pProgram->setTypeConformances(mpScene->getTypeConformances());
