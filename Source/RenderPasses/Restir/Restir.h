@@ -62,15 +62,13 @@ private:
     ref<Scene> mpScene;
     ref<SampleGenerator> mpSampleGenerator;
 
+    uint mMaxBounces = 3;
+    uint mFrameCount = 0;
+
     struct
     {
         ref<Program> pProgram;
         ref<RtBindingTable> pBindingTable;
         ref<RtProgramVars> pVars;
     } mTracer;
-
-    //ref<Program> mpProgram;
-    //ref<GraphicsState> mpGraphicsState;
-    //ref<RasterizerState> mpRasterizerState;
-    //ref<ProgramVars> mpVars;
 };

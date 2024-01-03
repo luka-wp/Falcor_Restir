@@ -94,6 +94,14 @@ void Restir::execute(RenderContext* pRenderContext, const RenderData& renderData
         mpScene->getLightCollection(pRenderContext);
     }
 
+    mTracer.pProgram->addDefine("MAX_BOUNCES", std::to_string(mMaxBounces));
+    //mTracer.pProgram->addDefine("COMPUTE_DIRECT", mComputeDirect ? "1" : "0");
+    //mTracer.pProgram->addDefine("USE_IMPORTANCE_SAMPLING", mUseImportanceSampling ? "1" : "0");
+    mTracer.pProgram->addDefine("USE_ANALYTIC_LIGHTS", mpScene->useAnalyticLights() ? "1" : "0");
+    mTracer.pProgram->addDefine("USE_EMISSIVE_LIGHTS", mpScene->useEmissiveLights() ? "1" : "0");
+    mTracer.pProgram->addDefine("USE_ENV_LIGHT", mpScene->useEnvLight() ? "1" : "0");
+    mTracer.pProgram->addDefine("USE_ENV_BACKGROUND", mpScene->useEnvBackground() ? "1" : "0");
+
     mTracer.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
     mTracer.pProgram->addDefines(getValidResourceDefines(kOutputChannels, renderData));
 
@@ -103,6 +111,8 @@ void Restir::execute(RenderContext* pRenderContext, const RenderData& renderData
     }
 
     ShaderVar var = mTracer.pVars->getRootVar();
+    var["CB"]["gFrameCount"] = mFrameCount;
+
     auto bind = [&](const ChannelDesc& desc)
     {
         if (!desc.texname.empty())
@@ -122,20 +132,7 @@ void Restir::execute(RenderContext* pRenderContext, const RenderData& renderData
     const uint2 targetDim = renderData.getDefaultTextureDims();
     mpScene->raytrace(pRenderContext, mTracer.pProgram.get(), mTracer.pVars, uint3(targetDim, 1));
 
-    // renderData holds the requested resources
-
-    //auto pTargetFbo = Fbo::create(mpDevice, {renderData.getTexture("output")});
-    //const float4 clearColor(0, 0, 0, 1);
-    //pRenderContext->clearFbo(pTargetFbo.get(), clearColor, 1.0f, 0, FboAttachmentType::All);
-    //mpGraphicsState->setFbo(pTargetFbo);
-
-    //if (mpScene)
-    //{
-    //    auto var = mpVars->getRootVar();
-    //    var["PerFrameCB"]["gColor"] = float4(0, 1, 0, 1);
-
-    //    mpScene->rasterize(pRenderContext, mpGraphicsState.get(), mpVars.get(), mpRasterizerState, mpRasterizerState);
-    //}
+    ++mFrameCount;
 }
 
 void Restir::renderUI(Gui::Widgets& widget)
