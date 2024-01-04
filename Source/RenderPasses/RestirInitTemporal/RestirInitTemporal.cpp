@@ -33,7 +33,7 @@ namespace
 {
 const char* kShaderFile = "RenderPasses/RestirInitTemporal/RestirInitTemporal.rt.slang";
 
-const uint32_t kMaxPayloadSizeBytes = 72u;
+const uint32_t kMaxPayloadSizeBytes = 256u;
 const uint32_t kMaxRecursionDepth = 2u;
 
 const char* kEntryRayGen = "rayGen";
@@ -54,9 +54,11 @@ const ChannelList kInputChannels = {
 
 const char* kReservoirCurrent = "reservoirCurrent";
 const char* kReservoirPrevious = "reservoirPrevious";
+const char* kOutputColor = "outputColor";
 const ChannelList kOutputChannels = {
-    {kReservoirCurrent, "gReservoirCurrent", "Current reservoir state"},
-    {kReservoirPrevious, "gReservoirPrevious", "Previous reservoir state"}
+    {kReservoirCurrent, "gReservoirCurrent", "Current reservoir state", false, ResourceFormat::RGBA32Float},
+    {kReservoirPrevious, "gReservoirPrevious", "Previous reservoir state", false, ResourceFormat::RGBA32Float},
+    {kOutputColor, "gOutputColor", "Output color", false, ResourceFormat::RGBA32Float}
 };
 }; // namespace
 
@@ -115,6 +117,8 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
     ShaderVar var = mTracer.pVars->getRootVar();
     var["CB"]["gFrameCount"] = mFrameCount;
     var["CB"]["gInitLights"] = mInitLights;
+    var["CB"]["gTemporalReuse"] = mTemporalReuse;
+    var["CB"]["gIndirectLight"] = mIndirectLight;
 
     auto bind = [&](const ChannelDesc& desc)
     {
@@ -128,12 +132,21 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
     for (auto channel : kOutputChannels)
         bind(channel);
 
+    ref<Texture> outColorTexture = renderData.getTexture(kOutputColor);
+    allocateReservoir(outColorTexture->getWidth(), outColorTexture->getHeight());
+    var["gReservoirPrevious"] = mpReservoirPrevious;
+    var["gReservoirCurrent"] = mpReservoirCurrent;
+
+    uint2 targetDim = renderData.getDefaultTextureDims();
+    mpScene->raytrace(pRenderContext, mTracer.pProgram.get(), mTracer.pVars, uint3(targetDim, 1));
     mInitLights = false;
     ++mFrameCount;
 }
 
 void RestirInitTemporal::renderUI(Gui::Widgets& widget)
 {
+    widget.checkbox("Temporal Reuse", mTemporalReuse);
+    widget.checkbox("Indirect Light", mIndirectLight);
 }
 
 void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
@@ -175,7 +188,8 @@ void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene
         bindingTable->setHitGroup(
             0,
             mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh),
-            desc.addHitGroup(kEntryShadowClosestHit, kEntryShadowAnyHit)
+            //desc.addHitGroup(kEntryShadowClosestHit, kEntryShadowAnyHit)
+            desc.addHitGroup("", kEntryShadowAnyHit)
         );
         bindingTable->setHitGroup(
             1,
@@ -187,7 +201,7 @@ void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene
     }
 }
 
-void RestirInitTemporal::allocateReservoir(int bufferX, int bufferY)
+void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
 {
     bool allocate = mpReservoirPrevious == nullptr || mpReservoirCurrent == nullptr;
     allocate = allocate || mpReservoirPrevious->getWidth() != bufferX || mpReservoirPrevious->getHeight() != bufferY;
@@ -201,7 +215,7 @@ void RestirInitTemporal::allocateReservoir(int bufferX, int bufferY)
             1,
             1,
             nullptr,
-            ResourceBindFlags::UnorderedAccess
+            ResourceBindFlags::UnorderedAccess | ResourceBindFlags::RenderTarget
         );
 
         mpReservoirCurrent = mpDevice->createTexture2D(
@@ -211,7 +225,7 @@ void RestirInitTemporal::allocateReservoir(int bufferX, int bufferY)
             1,
             1,
             nullptr,
-            ResourceBindFlags::UnorderedAccess
+            ResourceBindFlags::UnorderedAccess | ResourceBindFlags::RenderTarget
         );
     }
 }

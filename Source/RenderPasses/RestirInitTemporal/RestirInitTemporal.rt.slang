@@ -12,6 +12,8 @@ cbuffer CB
 {
     uint gFrameCount;
     bool gInitLights;
+    bool gTemporalReuse;
+    bool gIndirectLight;
 }
 
 Texture2D<PackedHitInfo> gVBuffer;
@@ -20,6 +22,7 @@ Texture2D<float2> gMotionVector;
 
 RWTexture2D<float4> gReservoirPrevious;
 RWTexture2D<float4> gReservoirCurrent;
+RWTexture2D<float4> gOutputColor;
 
 struct ShadowRayPayload
 {
@@ -105,9 +108,9 @@ bool traceShadowRay(float3 origin, float3 dir, float distance)
         gScene.rtAccel,
         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
         0xff /* instanceInclusionMask */,
-        1 /* hitIdx */,
+        0 /* hitIdx */,
         rayTypeCount,
-        1 /* missIdx */,
+        0 /* missIdx */,
         ray,
         rayData
     );
@@ -157,6 +160,24 @@ float3 evalDirectAnalytic(const ShadingData sd, const IMaterialInstance mi, inou
 /*  ============ *
     Entry Points
  *  ============ */
+
+[shader("miss")]
+void shadowMiss(inout ShadowRayPayload rayData)
+{
+    rayData.visible = true;
+}
+
+[shader("anyhit")]
+void shadowAnyHit(inout ShadowRayPayload rayData, BuiltInTriangleIntersectionAttributes attribs)
+{
+    GeometryInstanceID instanceID = getGeometryInstanceID();
+    VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
+    const uint materialID = gScene.getMaterialID(instanceID);
+    if (gScene.materials.alphaTest(v, materialID, 0.f))
+    {
+        IgnoreHit();
+    }
+}
 
 [shader("miss")]
 void indirectMiss(inout IndirectRayPayload rayData)
@@ -240,5 +261,30 @@ void rayGen()
         currentReservoir.w = (1.f / max(pHat, 0.0001f)) * (currentReservoir.x / max(currentReservoir.z, 0.0001f));
     }
 
-    //TODO: Continue with temporal reuse
+    if (gTemporalReuse)
+    {
+        float4 temporalReservoir = float4(0.f);
+        temporalReservoir = updateReservoir(temporalReservoir, currentReservoir.y, pHat * currentReservoir.w * currentReservoir.z, sampleGenerator);
+        
+        lightIndex = int(previousReservoir.y);
+        pHat = length(evalDirectAnalytic(shadingData, materialInstance, sampleGenerator, lightIndex, false));
+        previousReservoir.z = min(20.0f * currentReservoir.z, previousReservoir.z);
+        temporalReservoir = updateReservoir(temporalReservoir, previousReservoir.y, pHat * previousReservoir.w * previousReservoir.z, sampleGenerator);
+
+        temporalReservoir.z = currentReservoir.z + previousReservoir.z;
+
+        lightIndex = int(temporalReservoir.y);
+        pHat = length(evalDirectAnalytic(shadingData, materialInstance, sampleGenerator, lightIndex, false));
+        temporalReservoir.w = (1.f / max(pHat, 0.0001f)) * (temporalReservoir.x / max(temporalReservoir.z, 0.0001f));
+
+        currentReservoir = temporalReservoir;
+    }
+
+    if(gIndirectLight)
+    {
+        
+    }
+
+    gReservoirCurrent[launchIndex] = currentReservoir;
+    gOutputColor[launchIndex] = float4(float3(currentReservoir.w), 1.0f);
 }

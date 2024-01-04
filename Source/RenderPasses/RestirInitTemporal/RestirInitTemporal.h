@@ -53,10 +53,12 @@ public:
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
 private:
-    void allocateReservoir(int bufferX, int bufferY);
+    void allocateReservoir(uint bufferX, uint bufferY);
     void prepareVars();
 
     bool mInitLights = true;
+    bool mTemporalReuse = true;
+    bool mIndirectLight = true;
     uint mFrameCount = 0;
 
     ref<Scene> mpScene;
