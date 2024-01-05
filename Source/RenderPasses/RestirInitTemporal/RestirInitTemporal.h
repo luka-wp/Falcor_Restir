@@ -53,12 +53,22 @@ public:
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
 private:
+    void executeInitTemporal(RenderContext* pRenderContext, const RenderData& renderData);
+    void prepareInitTemporalProgram();
+
+    void executeSpatialReuse(RenderContext* pRenderContext, const RenderData& renderData);
+    void prepareSpatialReuseProgram();
+
+    void executeUpdateShade(RenderContext* pRenderContext, const RenderData& renderData);
+    void prepareUpdateShadeProgram();
+
     void allocateReservoir(uint bufferX, uint bufferY);
     void prepareVars();
 
     bool mInitLights = true;
     bool mTemporalReuse = true;
     bool mIndirectLight = true;
+    bool mSpatialReuse = true;
     uint mFrameCount = 0;
 
     ref<Scene> mpScene;
@@ -66,11 +76,16 @@ private:
 
     ref<Texture> mpReservoirPrevious;
     ref<Texture> mpReservoirCurrent;
+    ref<Texture> mpReservoirSpatial;
 
-    struct
+    struct PassTrace
     {
         ref<Program> pProgram;
         ref<RtBindingTable> pBindingTable;
         ref<RtProgramVars> pVars;
-    } mTracer;
+    };
+
+    PassTrace mTracerTemporal;
+    PassTrace mTracerSpatial;
+    PassTrace mTracerUpdateShade;
 };

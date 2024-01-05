@@ -53,4 +53,5 @@ public:
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
 private:
+    ref<Scene> mpScene;
 };

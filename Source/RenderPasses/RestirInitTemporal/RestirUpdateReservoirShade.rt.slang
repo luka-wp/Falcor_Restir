@@ -11,41 +11,19 @@ import Rendering.Lights.LightHelpers;
 cbuffer CB
 {
     uint gFrameCount;
-    bool gInitLights;
-    bool gTemporalReuse;
-    bool gIndirectLight;
 }
 
 Texture2D<PackedHitInfo> gVBuffer;
 Texture2D<float4> gViewW; // Optional
-Texture2D<float2> gMotionVector;
 
 RWTexture2D<float4> gReservoirPrevious;
-RWTexture2D<float4> gReservoirCurrent;
+RWTexture2D<float4> gReservoirSpatial;
+
+RWTexture2D<float4> gOutputColor;
 
 struct ShadowRayPayload
 {
     bool visible;
-};
-
-struct IndirectRayPayload
-{
-    float3 color;
-    uint randomSeed;
-    SampleGenerator sampleGenerator;
-
-    // ray data
-    float3 origin;
-    float3 direction;
-
-    __init(SampleGenerator sg)
-    {
-        this.color = float3(0.f);
-        this.randomSeed = 0;
-        this.sampleGenerator = sg;
-        this.origin = float3(0.f);
-        this.direction = float3(0.f);
-    }
 };
 
 float4 updateReservoir(float4 reservoir, int lightToSample, float weight, SampleGenerator sampleGenerator) {
@@ -115,7 +93,7 @@ bool traceShadowRay(float3 origin, float3 dir, float distance)
     return rayData.visible;
 }
 
-float3 evalDirectAnalytic(const ShadingData sd, const IMaterialInstance mi, inout SampleGenerator sg, inout int lightIdx, bool visibilityTest = true)
+float3 evalDirectAnalytic( const ShadingData sd, const IMaterialInstance mi, inout SampleGenerator sg, inout int lightIdx, bool visibilityTest = true )
 {
     const uint lightCount = gScene.getLightCount();
     if (lightCount == 0)
@@ -149,14 +127,10 @@ float3 evalDirectAnalytic(const ShadingData sd, const IMaterialInstance mi, inou
         if (!V)
             return float3(0.f);
     }
-        
+
     // Evaluate contribution.
     return mi.eval(sd, ls.dir, sg) * ls.Li * invPdf;
 }
-
-/*  ============ *
-    Entry Points
- *  ============ */
 
 [shader("miss")]
 void shadowMiss(inout ShadowRayPayload rayData)
@@ -176,40 +150,6 @@ void shadowAnyHit(inout ShadowRayPayload rayData, BuiltInTriangleIntersectionAtt
     }
 }
 
-[shader("miss")]
-void indirectMiss(inout IndirectRayPayload rayData)
-{
-    rayData.color = float3(0.f);
-}
-
-[shader("anyhit")]
-void indirectAnyHit(inout IndirectRayPayload rayData, BuiltInTriangleIntersectionAttributes attribs)
-{
-    GeometryInstanceID instanceID = getGeometryInstanceID();
-    VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
-    const uint materialID = gScene.getMaterialID(instanceID);
-    if (gScene.materials.alphaTest(v, materialID, 0.f))
-    {
-        IgnoreHit();
-    }
-}
-
-[shader("closesthit")]
-void indirectClosestHit(inout IndirectRayPayload rayData, BuiltInTriangleIntersectionAttributes attribs)
-{
-    TriangleHit triangleHit;
-    triangleHit.instanceID = getGeometryInstanceID();
-    triangleHit.primitiveIndex = PrimitiveIndex();
-    triangleHit.barycentrics = attribs.barycentrics;
-    HitInfo hitInfo = HitInfo(triangleHit);
-    let lod = ExplicitLodTextureSampler(0.f);
-
-    ShadingData shadingData = loadShadingData(hitInfo, rayData.origin, rayData.direction, lod);
-    IMaterialInstance materialInstance = gScene.materials.getMaterialInstance(shadingData, lod);
-    int lightIndex = -1;
-    rayData.color = evalDirectAnalytic(shadingData, materialInstance, rayData.sampleGenerator, lightIndex);
-}
-
 [shader("raygeneration")]
 void rayGen()
 {
@@ -222,67 +162,14 @@ void rayGen()
     ShadingData shadingData = loadShadingData(hit, primaryRayOrigin, primaryRayDir, lod);
     IMaterialInstance materialInstance = gScene.materials.getMaterialInstance(shadingData, lod);
 
-    float2 posH = float2(pixelXY) / float2(frameDim);
-
-    float4 previousReservoir = float4(0.f);
-    if (!gInitLights)
-    {
-        // float2 posHPrev = posH + gMotionVector[pixelXY].xy;
-        // uint2 prevIndex = pixelXY;
-        // prevIndex.xy = int2(posHPrev * frameDim);
-        int2 prevPixelXY = pixelXY + int2(gMotionVector[pixelXY].xy * (frameDim - int2(1)));
-        int2 prevIndex = prevPixelXY;
-        if (prevIndex.x >= 0 && prevIndex.x < frameDim.x && prevIndex.y >= 0 && prevIndex.y < frameDim.y)
-        {
-            previousReservoir = gReservoirPrevious[prevIndex];
-        }
-    }
+    float4 reservoir = gReservoirSpatial[pixelXY];
+    gReservoirPrevious[pixelXY] = reservoir;
 
     SampleGenerator sampleGenerator = SampleGenerator(pixelXY, gFrameCount);
-    float4 currentReservoir = float4(0.f);
-    float pHat = 0.f;
 
-    for (int i = 0; i < gScene.lightCount; i++)
-    {
-        int lightIndex = -1;
-        pHat = length(evalDirectAnalytic(shadingData, materialInstance, sampleGenerator, lightIndex, false));
-        currentReservoir = updateReservoir(currentReservoir, lightIndex, pHat, sampleGenerator);
-    }
+    int lightIndex = int(reservoir.y);
+    float3 shadeColor = evalDirectAnalytic(shadingData, materialInstance, sampleGenerator, lightIndex, true);
+    float3 outColor = shadeColor * reservoir.w;
 
-    int lightIndex = int(currentReservoir.y);
-    pHat = length(evalDirectAnalytic(shadingData, materialInstance, sampleGenerator, lightIndex, true));
-    if (pHat == 0.f)
-    {
-        currentReservoir.w = 0.f;
-    }
-    else
-    {
-        currentReservoir.w = (1.f / max(pHat, 0.0001f)) * (currentReservoir.x / max(currentReservoir.z, 0.0001f));
-    }
-
-    if (gTemporalReuse)
-    {
-        float4 temporalReservoir = float4(0.f);
-        temporalReservoir = updateReservoir(temporalReservoir, currentReservoir.y, pHat * currentReservoir.w * currentReservoir.z, sampleGenerator);
-        
-        lightIndex = int(previousReservoir.y);
-        pHat = length(evalDirectAnalytic(shadingData, materialInstance, sampleGenerator, lightIndex, false));
-        previousReservoir.z = min(20.0f * currentReservoir.z, previousReservoir.z);
-        temporalReservoir = updateReservoir(temporalReservoir, previousReservoir.y, pHat * previousReservoir.w * previousReservoir.z, sampleGenerator);
-
-        temporalReservoir.z = currentReservoir.z + previousReservoir.z;
-
-        lightIndex = int(temporalReservoir.y);
-        pHat = length(evalDirectAnalytic(shadingData, materialInstance, sampleGenerator, lightIndex, false));
-        temporalReservoir.w = (1.f / max(pHat, 0.0001f)) * (temporalReservoir.x / max(temporalReservoir.z, 0.0001f));
-
-        currentReservoir = temporalReservoir;
-    }
-
-    if(gIndirectLight)
-    {
-        
-    }
-
-    gReservoirCurrent[pixelXY] = currentReservoir;
+    gOutputColor[pixelXY] = float4(outColor, 1.0f);
 }

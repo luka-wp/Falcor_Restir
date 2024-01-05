@@ -4,6 +4,8 @@ target_sources(RestirInitTemporal PRIVATE
     RestirInitTemporal.cpp
     RestirInitTemporal.h
     RestirInitTemporal.rt.slang
+    RestirSpatialReuse.rt.slang
+    RestirUpdateReservoirShade.rt.slang
 )
 
 target_copy_shaders(RestirInitTemporal RenderPasses/RestirInitTemporal)
