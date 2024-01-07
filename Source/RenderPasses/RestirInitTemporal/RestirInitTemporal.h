@@ -74,6 +74,10 @@ private:
     ref<Scene> mpScene;
     ref<SampleGenerator> mpSampleGenerator;
 
+    ref<Buffer> mpPreviousReservoir;
+    ref<Buffer> mpCurrentReservoir;
+    ref<Buffer> mpSpatialReservoir;
+
     ref<Texture> mpReservoirPrevious;
     ref<Texture> mpReservoirCurrent;
     ref<Texture> mpReservoirSpatial;

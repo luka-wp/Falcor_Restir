@@ -6,7 +6,58 @@ import Scene.Intersection;
 import Utils.Math.MathHelpers;
 import Utils.Geometry.GeometryHelpers;
 import Utils.Sampling.SampleGenerator;
+import Utils.Color.ColorHelpers;
 import Rendering.Lights.LightHelpers;
+
+struct SceneSample
+{
+    float3 visiblePoint;
+    float3 visibleNormal;
+    float3 samplePoint;
+    float3 sampleNormal;
+    float3 Lo;
+    __init()
+    {
+        visiblePoint = float3(0);
+        visibleNormal = float3(0);
+        samplePoint = float3(0);
+        sampleNormal = float3(0);
+        Lo = float3(0);
+    }
+}
+
+struct Reservoir
+{
+    SceneSample sceneSample;
+    float sampleRelativeWeight_w;
+    uint numStoredSamples_M;
+    float sceneSampleWeight_W;
+
+    __init()
+    {
+        sceneSample = SceneSample();
+        sampleRelativeWeight_w = 0.f;
+        numStoredSamples_M = 0;
+        sceneSampleWeight_W = 0.f;
+    }
+
+    [mutating] void update(SceneSample s, float weight, inout SampleGenerator sampleGenerator)
+    {
+        sampleRelativeWeight_w += weight;
+        numStoredSamples_M += 1;
+        if ((sampleNext1D(sampleGenerator) * sampleRelativeWeight_w) < weight)
+        {
+            sceneSample = s;
+        }
+    }
+
+    [mutating] void merge(Reservoir r, float pHat, inout SampleGenerator sampleGenerator)
+    {
+        uint M0 = numStoredSamples_M;
+        update(r.sceneSample, pHat * r.sceneSampleWeight_W * r.numStoredSamples_M, sampleGenerator);
+        numStoredSamples_M = M0 + r.numStoredSamples_M;
+    }
+};
 
 cbuffer CB
 {
@@ -14,82 +65,92 @@ cbuffer CB
     bool gInitLights;
     bool gTemporalReuse;
     bool gIndirectLight;
+    float4x4 gPrevViewMatrix;
 }
 
-Texture2D<PackedHitInfo> gVBuffer;
-Texture2D<float4> gViewW; // Optional
-Texture2D<float2> gMotionVector;
+// Texture2D<PackedHitInfo> gVBuffer;
+// Texture2D<float4> gViewW; // Optional
+// Texture2D<float2> gMotionVector;
 
-RWTexture2D<float4> gReservoirPrevious;
-RWTexture2D<float4> gReservoirCurrent;
+Texture2D<float4> gPositionW;
+Texture2D<float4> gNormalW;
+Texture2D<float4> gDiffuseColor;
+
+// RWTexture2D<float4> gReservoirPrevious;
+// RWTexture2D<float4> gReservoirCurrent;
+
+RWStructuredBuffer<Reservoir> gPreviousReservoir;
+RWStructuredBuffer<Reservoir> gCurrentReservoir;
 
 struct ShadowRayPayload
 {
     bool visible;
 };
 
-struct IndirectRayPayload
-{
-    float3 color;
-    uint randomSeed;
-    SampleGenerator sampleGenerator;
+// struct IndirectRayPayload
+// {
+//     float3 color;
+//     uint randomSeed;
+//     SampleGenerator sampleGenerator;
 
-    // ray data
-    float3 origin;
-    float3 direction;
+//     // ray data
+//     float3 origin;
+//     float3 direction;
 
-    __init(SampleGenerator sg)
-    {
-        this.color = float3(0.f);
-        this.randomSeed = 0;
-        this.sampleGenerator = sg;
-        this.origin = float3(0.f);
-        this.direction = float3(0.f);
-    }
-};
+//     __init(SampleGenerator sg)
+//     {
+//         this.color = float3(0.f);
+//         this.randomSeed = 0;
+//         this.sampleGenerator = sg;
+//         this.origin = float3(0.f);
+//         this.direction = float3(0.f);
+//     }
+// };
 
-float4 updateReservoir(float4 reservoir, int lightToSample, float weight, SampleGenerator sampleGenerator) {
-    reservoir.x = reservoir.x + weight; // r.w_sum
-    reservoir.z = reservoir.z + 1.0f;   // r.M
-    if (sampleNext1D(sampleGenerator) < weight / reservoir.x) {
-        reservoir.y = lightToSample; // r.y
-    }
-    return reservoir;
-}
+// float4 updateReservoir(float4 reservoir, int lightToSample, float weight, SampleGenerator sampleGenerator)
+// {
+//     reservoir.x = reservoir.x + weight; // r.w_sum
+//     reservoir.z = reservoir.z + 1.0f;   // r.M
+//     if (sampleNext1D(sampleGenerator) < weight / reservoir.x)
+//     {
+//         reservoir.y = lightToSample; // r.y
+//     }
+//     return reservoir;
+// }
 
-#define is_valid(name) (is_valid_##name != 0)
-float3 getPrimaryRayDir(uint2 pixelXY, uint2 frameDim, const Camera camera)
-{
-    if (is_valid(gViewW))
-    {
-        // If we have the view vector bound as a buffer, just fetch it. No need to compute anything.
-        return -gViewW[pixelXY].xyz;
-    }
-    else
-    {
-        // Compute the view vector. This must exactly match what the G-buffer pass is doing (jitter etc.).
-        // Note that we do not take depth-of-field into account as it would require exactly matching the
-        // sample generator between the passes, which is error prone. The host side will issue a warning instead.
-        return camera.computeRayPinhole(pixelXY, frameDim).dir;
-    }
-}
+// #define is_valid(name) (is_valid_##name != 0)
+// float3 getPrimaryRayDir(uint2 pixelXY, uint2 frameDim, const Camera camera)
+// {
+//     if (is_valid(gViewW))
+//     {
+//         // If we have the view vector bound as a buffer, just fetch it. No need to compute anything.
+//         return -gViewW[pixelXY].xyz;
+//     }
+//     else
+//     {
+//         // Compute the view vector. This must exactly match what the G-buffer pass is doing (jitter etc.).
+//         // Note that we do not take depth-of-field into account as it would require exactly matching the
+//         // sample generator between the passes, which is error prone. The host side will issue a warning instead.
+//         return camera.computeRayPinhole(pixelXY, frameDim).dir;
+//     }
+// }
 
-ShadingData loadShadingData(const HitInfo hit, const float3 rayOrigin, const float3 rayDir, const ITextureSampler lod)
-{
-    VertexData v = {};
-    uint materialID = {};
+// ShadingData loadShadingData(const HitInfo hit, const float3 rayOrigin, const float3 rayDir, const ITextureSampler lod)
+// {
+//     VertexData v = {};
+//     uint materialID = {};
 
-    if (hit.getType() == HitType::Triangle)
-    {
-        const TriangleHit triangleHit = hit.getTriangleHit();
-        v = gScene.getVertexData(triangleHit);
-        materialID = gScene.getMaterialID(triangleHit.instanceID);
-    }
+//     if (hit.getType() == HitType::Triangle)
+//     {
+//         const TriangleHit triangleHit = hit.getTriangleHit();
+//         v = gScene.getVertexData(triangleHit);
+//         materialID = gScene.getMaterialID(triangleHit.instanceID);
+//     }
 
-    ShadingData sd = gScene.materials.prepareShadingData(v, materialID, -rayDir, lod);
+//     ShadingData sd = gScene.materials.prepareShadingData(v, materialID, -rayDir, lod);
 
-    return sd;
-}
+//     return sd;
+// }
 
 bool traceShadowRay(float3 origin, float3 dir, float distance)
 {
@@ -115,7 +176,13 @@ bool traceShadowRay(float3 origin, float3 dir, float distance)
     return rayData.visible;
 }
 
-float3 evalDirectAnalytic(const ShadingData sd, const IMaterialInstance mi, inout SampleGenerator sg, inout int lightIdx, bool visibilityTest = true)
+float3 evalDirectAnalytic(
+    const ShadingData sd,
+    const IMaterialInstance mi,
+    inout SampleGenerator sg,
+    inout int lightIdx,
+    bool visibilityTest = true
+)
 {
     const uint lightCount = gScene.getLightCount();
     if (lightCount == 0)
@@ -149,7 +216,7 @@ float3 evalDirectAnalytic(const ShadingData sd, const IMaterialInstance mi, inou
         if (!V)
             return float3(0.f);
     }
-        
+
     // Evaluate contribution.
     return mi.eval(sd, ls.dir, sg) * ls.Li * invPdf;
 }
@@ -210,17 +277,46 @@ void indirectClosestHit(inout IndirectRayPayload rayData, BuiltInTriangleInterse
     rayData.color = evalDirectAnalytic(shadingData, materialInstance, rayData.sampleGenerator, lightIndex);
 }
 
+AnalyticLightSample getLight(float3 posW, inout int lightIndex, inout SampleGenerator sampleGenerator)
+{
+    AnalyticLightSample lightSample;
+    uint lightCount = gScene.lightCount;
+    if (lightCount == 0)
+    {
+        return lightSample;
+    }
+
+    uint index = (lightIndex >= 0) ? lightIndex : min(uint(lightCount * sampleNext1D(sampleGenerator)), lightCount - 1);
+    LightData lightData = gScene.getLight(index);
+    if (lightData.type != uint(LightType::Point))
+    {
+        return lightSample;
+    }
+
+    if (!sampleLight(posW, lightData, sampleGenerator, lightSample))
+    {
+        return lightSample;
+    }
+
+    lightIndex = index;
+    return lightSample;
+}
+
 [shader("raygeneration")]
 void rayGen()
 {
     uint2 pixelXY = DispatchRaysIndex().xy;
     uint2 frameDim = DispatchRaysDimensions().xy;
-    const HitInfo hit = HitInfo(gVBuffer[pixelXY]);
-    const float3 primaryRayOrigin = gScene.camera.getPosition();
-    const float3 primaryRayDir = getPrimaryRayDir(pixelXY, frameDim, gScene.camera);
-    let lod = ExplicitLodTextureSampler(0.f);
-    ShadingData shadingData = loadShadingData(hit, primaryRayOrigin, primaryRayDir, lod);
-    IMaterialInstance materialInstance = gScene.materials.getMaterialInstance(shadingData, lod);
+    // const HitInfo hit = HitInfo(gVBuffer[pixelXY]);
+    // const float3 primaryRayOrigin = gScene.camera.getPosition();
+    // const float3 primaryRayDir = getPrimaryRayDir(pixelXY, frameDim, gScene.camera);
+    // let lod = ExplicitLodTextureSampler(0.f);
+    // ShadingData shadingData = loadShadingData(hit, primaryRayOrigin, primaryRayDir, lod);
+    // IMaterialInstance materialInstance = gScene.materials.getMaterialInstance(shadingData, lod);
+
+    float4 posW = gPositionW[pixelXY];
+    float4 normalW = gNormalW[pixelXY];
+    float3 diffuse = gDiffuseColor[pixelXY].xyz;
 
     float2 posH = float2(pixelXY) / float2(frameDim);
 
@@ -263,12 +359,14 @@ void rayGen()
     if (gTemporalReuse)
     {
         float4 temporalReservoir = float4(0.f);
-        temporalReservoir = updateReservoir(temporalReservoir, currentReservoir.y, pHat * currentReservoir.w * currentReservoir.z, sampleGenerator);
-        
+        temporalReservoir =
+            updateReservoir(temporalReservoir, currentReservoir.y, pHat * currentReservoir.w * currentReservoir.z, sampleGenerator);
+
         lightIndex = int(previousReservoir.y);
         pHat = length(evalDirectAnalytic(shadingData, materialInstance, sampleGenerator, lightIndex, false));
         previousReservoir.z = min(20.0f * currentReservoir.z, previousReservoir.z);
-        temporalReservoir = updateReservoir(temporalReservoir, previousReservoir.y, pHat * previousReservoir.w * previousReservoir.z, sampleGenerator);
+        temporalReservoir =
+            updateReservoir(temporalReservoir, previousReservoir.y, pHat * previousReservoir.w * previousReservoir.z, sampleGenerator);
 
         temporalReservoir.z = currentReservoir.z + previousReservoir.z;
 
@@ -279,10 +377,8 @@ void rayGen()
         currentReservoir = temporalReservoir;
     }
 
-    if(gIndirectLight)
-    {
-        
-    }
+    if (gIndirectLight)
+    {}
 
     gReservoirCurrent[pixelXY] = currentReservoir;
 }

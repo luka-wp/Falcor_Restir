@@ -31,7 +31,8 @@
 
 namespace
 {
-const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirInitTemporal.rt.slang";
+const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirMain.rt.slang";
+//const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirInitTemporal.rt.slang";
 const char* kSpatialReuseShaderFile = "RenderPasses/RestirInitTemporal/RestirSpatialReuse.rt.slang";
 const char* kUpdateShadeShaderFile = "RenderPasses/RestirInitTemporal/RestirUpdateReservoirShade.rt.slang";
 
@@ -48,10 +49,23 @@ const char* kEntryIndirectMiss = "indirectMiss";
 const char* kEntryIndirectAnyHit = "indirectAnyHit";
 const char* kEntryIndirectClosestHit = "indirectClosestHit";
 
+const char* kInputPositionWorld = "posW";            //RGBA32Float
+const char* kInputNormalWorld = "normW";             //RGBA32Float
+const char* kInputTangentWorld = "tangentW";         //RGBA32Float
+const char* kInputDiffuseOpacity = "diffuseOpacity"; // RGBA32Float
+
+//const ChannelList kTemporalInputChannels = {
+//    {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
+//    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
+//    {"motionVector", "gMotionVector", "Screen space motion vector"}};
+
 const ChannelList kTemporalInputChannels = {
+    {kInputPositionWorld, "gPositionW", ""},
+    {kInputNormalWorld, "gNormalW", ""},
+    {kInputTangentWorld, "gTangentW", ""},
+    {kInputDiffuseOpacity, "gDiffuseColor", ""},
     {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
-    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
-    {"motionVector", "gMotionVector", "Screen space motion vector"}};
+};
 
 const ChannelList kSpatialInputChannels = {
     {"vbuffer", "gVBuffer", "Visibility bufferin packed format"},
@@ -69,9 +83,9 @@ const char* kReservoirSpatial = "reservoirSpatial";
 const char* kOutputColor = "outputColor";
 
 const ChannelList kTemporalOutputChannels = {
-    {kReservoirCurrent, "gReservoirCurrent", "Current reservoir state", false, ResourceFormat::RGBA32Float},
-    {kReservoirPrevious, "gReservoirPrevious", "Previous reservoir state", false, ResourceFormat::RGBA32Float},
-    //{kOutputColor, "gOutputColor", "Output color", false, ResourceFormat::RGBA32Float}
+    //{kReservoirCurrent, "gReservoirCurrent", "Current reservoir state", false, ResourceFormat::RGBA32Float},
+    //{kReservoirPrevious, "gReservoirPrevious", "Previous reservoir state", false, ResourceFormat::RGBA32Float},
+    {kOutputColor, "gOutputColor", "Output color", false, ResourceFormat::RGBA32Float}
 };
 
 const ChannelList kSpatialOutputChannels = {
@@ -80,7 +94,9 @@ const ChannelList kSpatialOutputChannels = {
 const ChannelList kUpdateShadeOutputChannels = {
     {kReservoirSpatial, "gReservoirSpatial", "Spatial reservoir state", false, ResourceFormat::RGBA32Float},
     {kReservoirPrevious, "gReservoirPrevious", "Previous reservoir state", false, ResourceFormat::RGBA32Float},
-    {kOutputColor, "gOutputColor", "Output color", false, ResourceFormat::RGBA32Float}};
+    {kOutputColor, "gOutputColor", "Output color", false, ResourceFormat::RGBA32Float}
+};
+
 }; // namespace
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
@@ -103,7 +119,8 @@ RenderPassReflection RestirInitTemporal::reflect(const CompileData& compileData)
 {
     RenderPassReflection reflector;
     addRenderPassInputs(reflector, kTemporalInputChannels);
-    addRenderPassOutputs(reflector, kUpdateShadeOutputChannels);
+    addRenderPassOutputs(reflector, kTemporalOutputChannels);
+    //addRenderPassOutputs(reflector, kUpdateShadeOutputChannels);
     return reflector;
 }
 
@@ -126,17 +143,17 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
     {
         mpScene->getLightCollection(pRenderContext);
     }
-
     mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kTemporalInputChannels, renderData));
     mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kTemporalOutputChannels, renderData));
 
-    mTracerSpatial.pProgram->addDefines(getValidResourceDefines(kSpatialInputChannels, renderData));
+    /*mTracerSpatial.pProgram->addDefines(getValidResourceDefines(kSpatialInputChannels, renderData));
     mTracerSpatial.pProgram->addDefines(getValidResourceDefines(kSpatialOutputChannels, renderData));
 
     mTracerUpdateShade.pProgram->addDefines(getValidResourceDefines(kUpdateShadeInputChannels, renderData));
-    mTracerUpdateShade.pProgram->addDefines(getValidResourceDefines(kUpdateShadeOutputChannels, renderData));
+    mTracerUpdateShade.pProgram->addDefines(getValidResourceDefines(kUpdateShadeOutputChannels, renderData));*/
 
-    if (!mTracerTemporal.pVars || !mTracerSpatial.pVars)
+    //if (!mTracerTemporal.pVars || !mTracerSpatial.pVars)
+    if (!mTracerTemporal.pVars)
     {
         prepareVars();
     }
@@ -146,9 +163,9 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
 
     executeInitTemporal(pRenderContext, renderData);
 
-    executeSpatialReuse(pRenderContext, renderData);
+    //executeSpatialReuse(pRenderContext, renderData);
 
-    executeUpdateShade(pRenderContext, renderData);
+    //executeUpdateShade(pRenderContext, renderData);
 
     ++mFrameCount;
 }
@@ -165,8 +182,8 @@ void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene
     mpScene = pScene;
 
     prepareInitTemporalProgram();
-    prepareSpatialReuseProgram();
-    prepareUpdateShadeProgram();
+   /* prepareSpatialReuseProgram();
+    prepareUpdateShadeProgram();*/
 }
 
 namespace
@@ -185,17 +202,23 @@ void bindChannels(const ChannelList& channelList, ShaderVar& var, const RenderDa
 
 void RestirInitTemporal::executeInitTemporal(RenderContext* pRenderContext, const RenderData& renderData)
 {
+    const float4x4& prevViewMatrix = mpScene->getCamera()->getPrevViewMatrix();
+
     ShaderVar var = mTracerTemporal.pVars->getRootVar();
     var["CB"]["gFrameCount"] = mFrameCount;
     var["CB"]["gInitLights"] = mInitLights;
     var["CB"]["gTemporalReuse"] = mTemporalReuse;
     var["CB"]["gIndirectLight"] = mIndirectLight;
+    var["CB"]["gPrevViewMatrix"] = prevViewMatrix;
 
     bindChannels(kTemporalInputChannels, var, renderData);
     bindChannels(kTemporalOutputChannels, var, renderData);
 
-    var["gReservoirPrevious"] = mpReservoirPrevious;
-    var["gReservoirCurrent"] = mpReservoirCurrent;
+    /*var["gReservoirPrevious"] = mpReservoirPrevious;
+    var["gReservoirCurrent"] = mpReservoirCurrent;*/
+
+    var["gPreviousReservoir"] = mpPreviousReservoir;
+    var["gCurrentReservoir"] = mpCurrentReservoir;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
     mpScene->raytrace(pRenderContext, mTracerTemporal.pProgram.get(), mTracerTemporal.pVars, uint3(targetDim, 1));
@@ -331,6 +354,42 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
 
     if (allocate)
     {
+        const uint sampleCount = bufferX * bufferY;
+        // Temporal resources
+        {
+            ShaderVar var = mTracerTemporal.pVars->getRootVar();
+            mpPreviousReservoir = mpDevice->createStructuredBuffer(
+                var["gPreviousReservoir"],
+                sampleCount,
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+                MemoryType::DeviceLocal,
+                nullptr,
+                false
+            );
+
+            mpCurrentReservoir = mpDevice->createStructuredBuffer(
+                var["gCurrentReservoir"],
+                sampleCount,
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+                MemoryType::DeviceLocal,
+                nullptr,
+                false
+            );
+        }
+
+        // Spatial resources
+        /*{
+            ShaderVar var = mTracerSpatial.pVars->getRootVar();
+            mpSpatialReservoir = mpDevice->createStructuredBuffer(
+                var["gSpatialReservoir"],
+                sampleCount,
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+                MemoryType::DeviceLocal,
+                nullptr,
+                false
+            );
+        }*/
+
         mpReservoirPrevious = mpDevice->createTexture2D(
             bufferX,
             bufferY,
@@ -365,7 +424,8 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
 
 void RestirInitTemporal::prepareVars()
 {
-    const std::vector<PassTrace*> traces({&mTracerTemporal, &mTracerSpatial, &mTracerUpdateShade});
+    //const std::vector<PassTrace*> traces({&mTracerTemporal, &mTracerSpatial, &mTracerUpdateShade});
+    const std::vector<PassTrace*> traces({&mTracerTemporal});
     for (PassTrace* trace : traces)
     {
         trace->pProgram->addDefines(mpSampleGenerator->getDefines());

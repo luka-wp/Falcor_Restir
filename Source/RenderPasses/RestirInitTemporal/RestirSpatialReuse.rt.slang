@@ -8,6 +8,56 @@ import Utils.Geometry.GeometryHelpers;
 import Utils.Sampling.SampleGenerator;
 import Rendering.Lights.LightHelpers;
 
+struct SceneSample
+{
+    float3 visiblePoint;
+    float3 visibleNormal;
+    float3 samplePoint;
+    float3 sampleNormal;
+    float3 Lo;
+    __init()
+    {
+        visiblePoint = float3(0);
+        visibleNormal = float3(0);
+        samplePoint = float3(0);
+        sampleNormal = float3(0);
+        Lo = float3(0);
+    }
+}
+
+struct Reservoir
+{
+    SceneSample sceneSample;
+    float sampleRelativeWeight_w;
+    uint numStoredSamples_M;
+    float sceneSampleWeight_W;
+
+    __init()
+    {
+        sceneSample = SceneSample();
+        sampleRelativeWeight_w = 0.f;
+        numStoredSamples_M = 0;
+        sceneSampleWeight_W = 0.f;
+    }
+
+    [mutating] void update(SceneSample s, float weight, inout SampleGenerator sampleGenerator)
+    {
+        sampleRelativeWeight_w += weight;
+        numStoredSamples_M += 1;
+        if (sampleNext1D(sampleGenerator) < (weight / sampleRelativeWeight_w))
+        {
+            sceneSample = s;
+        }
+    }
+
+    [mutating] void merge(Reservoir r, float pHat, inout SampleGenerator sampleGenerator)
+    {
+        uint M0 = numStoredSamples_M;
+        update(r.sceneSample, pHat * r.sceneSampleWeight_W * r.numStoredSamples_M, sampleGenerator);
+        numStoredSamples_M = M0 + r.numStoredSamples_M;
+    }
+};
+
 cbuffer CB
 {
     uint gFrameCount;
@@ -19,6 +69,9 @@ Texture2D<float4> gViewW; // Optional
 
 RWTexture2D<float4> gReservoirCurrent;
 RWTexture2D<float4> gReservoirSpatial;
+
+RWStructuredBuffer<Reservoir> gCurrentReservoir;
+RWStructuredBuffer<Reservoir> gSpatialReservoir;
 
 float4 updateReservoir(float4 reservoir, int lightToSample, float weight, SampleGenerator sampleGenerator) {
     reservoir.x = reservoir.x + weight; // r.w_sum
