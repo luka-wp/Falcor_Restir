@@ -31,12 +31,13 @@
 
 namespace
 {
-const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirMain.rt.slang";
+const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirInitialSamples.rt.slang";
+//const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirMain.rt.slang";
 //const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirInitTemporal.rt.slang";
 const char* kSpatialReuseShaderFile = "RenderPasses/RestirInitTemporal/RestirSpatialReuse.rt.slang";
 const char* kUpdateShadeShaderFile = "RenderPasses/RestirInitTemporal/RestirUpdateReservoirShade.rt.slang";
 
-const uint32_t kMaxPayloadSizeBytes = 64u;
+const uint32_t kMaxPayloadSizeBytes = 96u;
 const uint32_t kMaxRecursionDepth = 2u;
 
 const char* kEntryRayGen = "rayGen";
@@ -54,18 +55,19 @@ const char* kInputNormalWorld = "normW";             //RGBA32Float
 const char* kInputTangentWorld = "tangentW";         //RGBA32Float
 const char* kInputDiffuseOpacity = "diffuseOpacity"; // RGBA32Float
 
-//const ChannelList kTemporalInputChannels = {
-//    {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
-//    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
-//    {"motionVector", "gMotionVector", "Screen space motion vector"}};
-
 const ChannelList kTemporalInputChannels = {
-    {kInputPositionWorld, "gPositionW", ""},
-    {kInputNormalWorld, "gNormalW", ""},
-    {kInputTangentWorld, "gTangentW", ""},
-    {kInputDiffuseOpacity, "gDiffuseColor", ""},
     {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
+    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
+    //{"motionVector", "gMotionVector", "Screen space motion vector"}
 };
+
+//const ChannelList kTemporalInputChannels = {
+//    {kInputPositionWorld, "gPositionW", ""},
+//    {kInputNormalWorld, "gNormalW", ""},
+//    {kInputTangentWorld, "gTangentW", ""},
+//    {kInputDiffuseOpacity, "gDiffuseColor", ""},
+//    {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
+//};
 
 const ChannelList kSpatialInputChannels = {
     {"vbuffer", "gVBuffer", "Visibility bufferin packed format"},
@@ -206,10 +208,10 @@ void RestirInitTemporal::executeInitTemporal(RenderContext* pRenderContext, cons
 
     ShaderVar var = mTracerTemporal.pVars->getRootVar();
     var["CB"]["gFrameCount"] = mFrameCount;
-    var["CB"]["gInitLights"] = mInitLights;
-    var["CB"]["gTemporalReuse"] = mTemporalReuse;
-    var["CB"]["gIndirectLight"] = mIndirectLight;
-    var["CB"]["gPrevViewMatrix"] = prevViewMatrix;
+    //var["CB"]["gInitLights"] = mInitLights;
+    //var["CB"]["gTemporalReuse"] = mTemporalReuse;
+    //var["CB"]["gIndirectLight"] = mIndirectLight;
+    //var["CB"]["gPrevViewMatrix"] = prevViewMatrix;
 
     bindChannels(kTemporalInputChannels, var, renderData);
     bindChannels(kTemporalOutputChannels, var, renderData);

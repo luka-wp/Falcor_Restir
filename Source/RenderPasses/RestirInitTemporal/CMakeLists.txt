@@ -7,6 +7,7 @@ target_sources(RestirInitTemporal PRIVATE
     RestirInitTemporal.rt.slang
     RestirSpatialReuse.rt.slang
     RestirUpdateReservoirShade.rt.slang
+    RestirInitialSamples.rt.slang
 )
 
 target_copy_shaders(RestirInitTemporal RenderPasses/RestirInitTemporal)
