@@ -23,6 +23,7 @@ struct SceneSample
     float3 samplePoint;
     float3 sampleNormal;
     float3 radiance;
+    float sourcePdf;
     __init()
     {
         visiblePoint = float3(0);
@@ -30,6 +31,7 @@ struct SceneSample
         samplePoint = float3(0);
         sampleNormal = float3(0);
         radiance = float3(0);
+        sourcePdf = 0.f;
     }
 };
 
@@ -71,7 +73,6 @@ struct Reservoir
 Texture2D<PackedHitInfo> gVBuffer;
 Texture2D<float4> gViewW;
 
-RWStructuredBuffer<Reservoir> gPreviousReservoir;
 RWStructuredBuffer<Reservoir> gCurrentReservoir;
 RWTexture2D<float4> gOutputColor;
 
@@ -94,6 +95,7 @@ struct ScatterRayData
     float3 origin;    ///< Next path segment origin.
     float3 normal;
     float3 direction; ///< Next path segment direction.
+    float pdf;
 
     SampleGenerator sg; ///< Per-ray state for the sample generator (up to 16B).
 
@@ -109,9 +111,15 @@ struct ScatterRayData
         this.origin = float3(0, 0, 0);
         this.normal = float3(0, 0, 0);
         this.direction = float3(0, 0, 0);
+        pdf = 0.f;
         this.sg = sg;
     }
 };
+
+uint getPixelIndex(uint2 pixel, uint2 frame)
+{
+    return pixel.x + pixel.y * frame.x;
+}
 
 ShadingData loadShadingData(const HitInfo hit, const float3 rayOrigin, const float3 rayDir, const ITextureSampler lod)
 {
@@ -201,6 +209,7 @@ bool generateScatterRay(const ShadingData sd, const IMaterialInstance mi, bool i
         rayData.normal = sd.faceN;
         rayData.direction = bsdfSample.wo;
         rayData.thp *= bsdfSample.weight;
+        rayData.pdf = bsdfSample.pdf;
         return any(rayData.thp > 0.f);
     }
     return false;
@@ -310,6 +319,7 @@ SceneSample tracePath(const uint2 pixel, const uint2 frameDim)
 
         outSample.samplePoint = rayData.origin;
         outSample.sampleNormal = rayData.normal;
+        outSample.sourcePdf = rayData.pdf;
     }
     else
     {
@@ -372,8 +382,11 @@ void rayGen()
 {
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 frameDim = DispatchRaysDimensions().xy;
+    uint pixelIndex = getPixelIndex(pixel, frameDim);
 
     Reservoir reservoir;
     reservoir.sceneSample = tracePath(pixel, frameDim);
+    reservoir.numStoredSamples_M = 1;
+
     gOutputColor[pixel] = float4(reservoir.sceneSample.radiance, 1.0f);
 }

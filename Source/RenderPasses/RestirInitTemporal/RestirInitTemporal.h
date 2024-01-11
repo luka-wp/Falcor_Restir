@@ -53,6 +53,24 @@ public:
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
 private:
+    struct PassTrace
+    {
+        ref<Program> pProgram;
+        ref<RtBindingTable> pBindingTable;
+        ref<RtProgramVars> pVars;
+    };
+
+    /* >> ReSTIR 3 >>*/
+    void executeInitSamples(RenderContext* pRenderContext, const RenderData& renderData);
+    void prepareInitSamplesProgram();
+
+    void executeTemporal(RenderContext* pRenderContext, const RenderData& renderData);
+    void prepareTemporalProgram();
+
+    void executeSpatial(RenderContext* pRenderContext, const RenderData& renderData);
+    void prepareSpatialProgram();
+    /* << ReSTIR 3 <<*/
+
     void executeInitTemporal(RenderContext* pRenderContext, const RenderData& renderData);
     void prepareInitTemporalProgram();
 
@@ -74,22 +92,24 @@ private:
     ref<Scene> mpScene;
     ref<SampleGenerator> mpSampleGenerator;
 
-    ref<Buffer> mpPreviousReservoir;
+    ref<Buffer> mpTemporalReservoirOld;
+    ref<Buffer> mpTemporalReservoirNew;
     ref<Buffer> mpCurrentReservoir;
     ref<Buffer> mpSpatialReservoir;
 
+
+    //PassTrace mTracerTemporal;
+    //PassTrace mTracerSpatial;
+    PassTrace mTracerUpdateShade;
+
+    /* >> ReSTIR 3 >>*/
     ref<Texture> mpReservoirPrevious;
     ref<Texture> mpReservoirCurrent;
     ref<Texture> mpReservoirSpatial;
 
-    struct PassTrace
-    {
-        ref<Program> pProgram;
-        ref<RtBindingTable> pBindingTable;
-        ref<RtProgramVars> pVars;
-    };
-
+    PassTrace mTracerInit;
     PassTrace mTracerTemporal;
     PassTrace mTracerSpatial;
-    PassTrace mTracerUpdateShade;
+
+    /* << ReSTIR 3 <<*/
 };

@@ -31,10 +31,26 @@
 
 namespace
 {
+/* >> ReSTIR 3 >> */
+const char* kInitSamplesShaderFile = "RenderPasses/RestirInitTemporal/RestirInitialSamples.rt.slang";
+const char* kTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirTemporal.rt.slang";
+const char* kSpatialShaderFile = "RenderPasses/RestirInitTemporal/RestirSpatial.rt.slang";
+
+const ChannelList kInputChannels = {
+    {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
+    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
+    {"motionVector", "gMotionVector", "Screen space motion vector", true}
+};
+
+//TODO: !!!! Setup spatial reuse and create finalization shader
+
+/* << ReSTIR 3 << */
+
 const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirInitialSamples.rt.slang";
 //const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirMain.rt.slang";
 //const char* kInitTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirInitTemporal.rt.slang";
-const char* kSpatialReuseShaderFile = "RenderPasses/RestirInitTemporal/RestirSpatialReuse.rt.slang";
+const char* kSpatialReuseShaderFile = "RenderPasses/RestirInitTemporal/RestirSpatial.rt.slang";
+//const char* kSpatialReuseShaderFile = "RenderPasses/RestirInitTemporal/RestirSpatialReuse.rt.slang";
 const char* kUpdateShadeShaderFile = "RenderPasses/RestirInitTemporal/RestirUpdateReservoirShade.rt.slang";
 
 const uint32_t kMaxPayloadSizeBytes = 96u;
@@ -55,11 +71,17 @@ const char* kInputNormalWorld = "normW";             //RGBA32Float
 const char* kInputTangentWorld = "tangentW";         //RGBA32Float
 const char* kInputDiffuseOpacity = "diffuseOpacity"; // RGBA32Float
 
-const ChannelList kTemporalInputChannels = {
-    {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
-    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
-    //{"motionVector", "gMotionVector", "Screen space motion vector"}
-};
+//const ChannelList kInitInputChannels = {
+//    {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
+//    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
+//    //{"motionVector", "gMotionVector", "Screen space motion vector"}
+//};
+
+//const ChannelList kTemporalInputChannels = {
+//    {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
+//    {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
+//    //{"motionVector", "gMotionVector", "Screen space motion vector"}
+//};
 
 //const ChannelList kTemporalInputChannels = {
 //    {kInputPositionWorld, "gPositionW", ""},
@@ -120,7 +142,7 @@ Properties RestirInitTemporal::getProperties() const
 RenderPassReflection RestirInitTemporal::reflect(const CompileData& compileData)
 {
     RenderPassReflection reflector;
-    addRenderPassInputs(reflector, kTemporalInputChannels);
+    addRenderPassInputs(reflector, kInputChannels);
     addRenderPassOutputs(reflector, kTemporalOutputChannels);
     //addRenderPassOutputs(reflector, kUpdateShadeOutputChannels);
     return reflector;
@@ -145,8 +167,13 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
     {
         mpScene->getLightCollection(pRenderContext);
     }
-    mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kTemporalInputChannels, renderData));
-    mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kTemporalOutputChannels, renderData));
+
+    mTracerInit.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
+    mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
+    mTracerSpatial.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
+
+    /*mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kInitInputChannels, renderData));
+    mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kTemporalOutputChannels, renderData));*/
 
     /*mTracerSpatial.pProgram->addDefines(getValidResourceDefines(kSpatialInputChannels, renderData));
     mTracerSpatial.pProgram->addDefines(getValidResourceDefines(kSpatialOutputChannels, renderData));
@@ -183,9 +210,12 @@ void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene
 {
     mpScene = pScene;
 
-    prepareInitTemporalProgram();
-   /* prepareSpatialReuseProgram();
-    prepareUpdateShadeProgram();*/
+    prepareInitSamplesProgram();
+    prepareTemporalProgram();
+
+    //prepareInitTemporalProgram();
+    //prepareSpatialReuseProgram();
+    //prepareUpdateShadeProgram();
 }
 
 namespace
@@ -202,6 +232,103 @@ void bindChannels(const ChannelList& channelList, ShaderVar& var, const RenderDa
 }
 }
 
+void RestirInitTemporal::executeInitSamples(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    ShaderVar var = mTracerTemporal.pVars->getRootVar();
+    var["CB"]["gFrameCount"] = mFrameCount;
+
+    bindChannels(kInputChannels, var, renderData);
+    bindChannels(kTemporalOutputChannels, var, renderData);
+
+    var["gCurrentReservoir"] = mpCurrentReservoir;
+
+    uint2 targetDim = renderData.getDefaultTextureDims();
+    mpScene->raytrace(pRenderContext, mTracerTemporal.pProgram.get(), mTracerTemporal.pVars, uint3(targetDim, 1));
+}
+
+void RestirInitTemporal::prepareInitSamplesProgram()
+{
+    mTracerInit.pProgram = nullptr;
+    mTracerInit.pBindingTable = nullptr;
+    mTracerInit.pVars = nullptr;
+    mInitLights = true;
+
+    if (mpScene)
+    {
+        ProgramDesc desc;
+        desc.addShaderModules(mpScene->getShaderModules());
+        desc.addShaderLibrary(kInitSamplesShaderFile);
+
+        desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
+        desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
+        desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
+
+        mTracerInit.pBindingTable = RtBindingTable::create(2, 2, mpScene->getGeometryCount());
+
+        ref<RtBindingTable>& bindingTable = mTracerInit.pBindingTable;
+        bindingTable->setRayGen(desc.addRayGen(kEntryRayGen));
+        bindingTable->setMiss(0, desc.addMiss(kEntryShadowMiss));
+        bindingTable->setMiss(1, desc.addMiss(kEntryIndirectMiss));
+        bindingTable->setHitGroup(0, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", kEntryShadowAnyHit));
+        bindingTable->setHitGroup(
+            1, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup(kEntryIndirectClosestHit, kEntryIndirectAnyHit)
+        );
+
+        mTracerInit.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
+    }
+}
+
+void RestirInitTemporal::executeTemporal(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    ShaderVar var = mTracerTemporal.pVars->getRootVar();
+    var["CB"]["gFrameCount"] = mFrameCount;
+    var["CB"]["gInitialSamples"] = mInitLights;
+
+    bindChannels(kInputChannels, var, renderData);
+
+    var["gTemporalReservoirOld"] = mpTemporalReservoirOld;
+    var["gTemporalReservoirNew"] = mpTemporalReservoirNew;
+    var["gCurrentReservoir"] = mpCurrentReservoir;
+
+    uint2 targetDim = renderData.getDefaultTextureDims();
+    mpScene->raytrace(pRenderContext, mTracerTemporal.pProgram.get(), mTracerTemporal.pVars, uint3(targetDim, 1));
+    mInitLights = false;
+}
+
+void RestirInitTemporal::prepareTemporalProgram()
+{
+    mTracerTemporal.pProgram = nullptr;
+    mTracerTemporal.pBindingTable = nullptr;
+    mTracerTemporal.pVars = nullptr;
+    mInitLights = true;
+
+    if (mpScene)
+    {
+        ProgramDesc desc;
+        desc.addShaderModules(mpScene->getShaderModules());
+        desc.addShaderLibrary(kTemporalShaderFile);
+
+        desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
+        desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
+        desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
+
+        mTracerTemporal.pBindingTable = RtBindingTable::create(0, 0, mpScene->getGeometryCount());
+
+        ref<RtBindingTable>& bindingTable = mTracerTemporal.pBindingTable;
+        bindingTable->setRayGen(desc.addRayGen(kEntryRayGen));
+
+        mTracerTemporal.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
+    }
+}
+
+void RestirInitTemporal::executeSpatial(RenderContext* pRenderContext, const RenderData& renderData)
+{
+}
+
+void RestirInitTemporal::prepareSpatialProgram()
+{
+}
+
 void RestirInitTemporal::executeInitTemporal(RenderContext* pRenderContext, const RenderData& renderData)
 {
     const float4x4& prevViewMatrix = mpScene->getCamera()->getPrevViewMatrix();
@@ -213,13 +340,13 @@ void RestirInitTemporal::executeInitTemporal(RenderContext* pRenderContext, cons
     //var["CB"]["gIndirectLight"] = mIndirectLight;
     //var["CB"]["gPrevViewMatrix"] = prevViewMatrix;
 
-    bindChannels(kTemporalInputChannels, var, renderData);
+    //bindChannels(kTemporalInputChannels, var, renderData);
     bindChannels(kTemporalOutputChannels, var, renderData);
 
     /*var["gReservoirPrevious"] = mpReservoirPrevious;
     var["gReservoirCurrent"] = mpReservoirCurrent;*/
 
-    var["gPreviousReservoir"] = mpPreviousReservoir;
+    var["gPreviousReservoir"] = mpTemporalReservoirOld;
     var["gCurrentReservoir"] = mpCurrentReservoir;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
@@ -357,11 +484,22 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
     if (allocate)
     {
         const uint sampleCount = bufferX * bufferY;
+        {
+            ShaderVar var = mTracerSpatial.pVars->getRootVar();
+            mpCurrentReservoir = mpDevice->createStructuredBuffer(
+                var["gCurrentReservoir"],
+                sampleCount,
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+                MemoryType::DeviceLocal,
+                nullptr,
+                false
+            );
+        }
         // Temporal resources
         {
             ShaderVar var = mTracerTemporal.pVars->getRootVar();
-            mpPreviousReservoir = mpDevice->createStructuredBuffer(
-                var["gPreviousReservoir"],
+            mpTemporalReservoirOld = mpDevice->createStructuredBuffer(
+                var["gTemporalReservoirOld"],
                 sampleCount,
                 ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
                 MemoryType::DeviceLocal,
@@ -369,8 +507,8 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
                 false
             );
 
-            mpCurrentReservoir = mpDevice->createStructuredBuffer(
-                var["gCurrentReservoir"],
+            mpTemporalReservoirNew = mpDevice->createStructuredBuffer(
+                var["gTemporalReservoirNew"],
                 sampleCount,
                 ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
                 MemoryType::DeviceLocal,
