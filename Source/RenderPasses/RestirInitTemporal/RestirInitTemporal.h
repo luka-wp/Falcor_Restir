@@ -69,6 +69,9 @@ private:
 
     void executeSpatial(RenderContext* pRenderContext, const RenderData& renderData);
     void prepareSpatialProgram();
+
+    void executeFinalize(RenderContext* pRenderContext, const RenderData& renderData);
+    void prepareFinalizeProgram();
     /* << ReSTIR 3 <<*/
 
     void executeInitTemporal(RenderContext* pRenderContext, const RenderData& renderData);
@@ -110,6 +113,7 @@ private:
     PassTrace mTracerInit;
     PassTrace mTracerTemporal;
     PassTrace mTracerSpatial;
+    PassTrace mTracerFinalize;
 
     /* << ReSTIR 3 <<*/
 };

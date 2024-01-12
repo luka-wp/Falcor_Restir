@@ -35,14 +35,17 @@ namespace
 const char* kInitSamplesShaderFile = "RenderPasses/RestirInitTemporal/RestirInitialSamples.rt.slang";
 const char* kTemporalShaderFile = "RenderPasses/RestirInitTemporal/RestirTemporal.rt.slang";
 const char* kSpatialShaderFile = "RenderPasses/RestirInitTemporal/RestirSpatial.rt.slang";
+const char* kFinalizeShaderFile = "RenderPasses/RestirInitTemporal/RestirFinalize.rt.slang";
 
 const ChannelList kInputChannels = {
-    {"vbuffer", "gVBuffer", "Visibility buffer in packed format"},
+    {"vbuffer", "gVBuffer", "Visibility buffer in packed format", true},
     {"viewW", "gViewW", "World-space view direction (xyz float format)", true},
     {"motionVector", "gMotionVector", "Screen space motion vector", true}
 };
 
-//TODO: !!!! Setup spatial reuse and create finalization shader
+const char* kOutputColor = "outputColor";
+const ChannelList kOutputChannels = {
+    {kOutputColor, "gOutputColor", "Output color", false, ResourceFormat::RGBA32Float}};
 
 /* << ReSTIR 3 << */
 
@@ -104,7 +107,7 @@ const ChannelList kUpdateShadeInputChannels = {
 const char* kReservoirCurrent = "reservoirCurrent";
 const char* kReservoirPrevious = "reservoirPrevious";
 const char* kReservoirSpatial = "reservoirSpatial";
-const char* kOutputColor = "outputColor";
+
 
 const ChannelList kTemporalOutputChannels = {
     //{kReservoirCurrent, "gReservoirCurrent", "Current reservoir state", false, ResourceFormat::RGBA32Float},
@@ -171,6 +174,7 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
     mTracerInit.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
     mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
     mTracerSpatial.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
+    mTracerFinalize.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
 
     /*mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kInitInputChannels, renderData));
     mTracerTemporal.pProgram->addDefines(getValidResourceDefines(kTemporalOutputChannels, renderData));*/
@@ -190,7 +194,12 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
     const uint2 dims = renderData.getDefaultTextureDims();
     allocateReservoir(dims.x, dims.y);
 
-    executeInitTemporal(pRenderContext, renderData);
+    executeInitSamples(pRenderContext, renderData);
+    executeTemporal(pRenderContext, renderData);
+    executeSpatial(pRenderContext, renderData);
+    executeFinalize(pRenderContext, renderData);
+
+    //executeInitTemporal(pRenderContext, renderData);
 
     //executeSpatialReuse(pRenderContext, renderData);
 
@@ -203,7 +212,7 @@ void RestirInitTemporal::renderUI(Gui::Widgets& widget)
 {
     widget.checkbox("Temporal Reuse", mTemporalReuse);
     widget.checkbox("Spatial Reuse", mSpatialReuse);
-    widget.checkbox("Indirect Light", mIndirectLight);
+    //widget.checkbox("Indirect Light", mIndirectLight);
 }
 
 void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
@@ -212,6 +221,8 @@ void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene
 
     prepareInitSamplesProgram();
     prepareTemporalProgram();
+    prepareSpatialProgram();
+    prepareFinalizeProgram();
 
     //prepareInitTemporalProgram();
     //prepareSpatialReuseProgram();
@@ -224,7 +235,7 @@ void bindChannels(const ChannelList& channelList, ShaderVar& var, const RenderDa
 {
     for (auto channel : channelList)
     {
-        if (!channel.texname.empty())
+        if (!channel.texname.empty() && var.hasMember(channel.texname))
         {
             var[channel.texname] = renderData.getTexture(channel.name);
         }
@@ -234,16 +245,15 @@ void bindChannels(const ChannelList& channelList, ShaderVar& var, const RenderDa
 
 void RestirInitTemporal::executeInitSamples(RenderContext* pRenderContext, const RenderData& renderData)
 {
-    ShaderVar var = mTracerTemporal.pVars->getRootVar();
+    ShaderVar var = mTracerInit.pVars->getRootVar();
     var["CB"]["gFrameCount"] = mFrameCount;
 
     bindChannels(kInputChannels, var, renderData);
-    bindChannels(kTemporalOutputChannels, var, renderData);
 
     var["gCurrentReservoir"] = mpCurrentReservoir;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
-    mpScene->raytrace(pRenderContext, mTracerTemporal.pProgram.get(), mTracerTemporal.pVars, uint3(targetDim, 1));
+    mpScene->raytrace(pRenderContext, mTracerInit.pProgram.get(), mTracerInit.pVars, uint3(targetDim, 1));
 }
 
 void RestirInitTemporal::prepareInitSamplesProgram()
@@ -283,6 +293,7 @@ void RestirInitTemporal::executeTemporal(RenderContext* pRenderContext, const Re
     ShaderVar var = mTracerTemporal.pVars->getRootVar();
     var["CB"]["gFrameCount"] = mFrameCount;
     var["CB"]["gInitialSamples"] = mInitLights;
+    var["CB"]["gEnableTemporal"] = mTemporalReuse;
 
     bindChannels(kInputChannels, var, renderData);
 
@@ -323,10 +334,83 @@ void RestirInitTemporal::prepareTemporalProgram()
 
 void RestirInitTemporal::executeSpatial(RenderContext* pRenderContext, const RenderData& renderData)
 {
+    ShaderVar var = mTracerSpatial.pVars->getRootVar();
+    var["CB"]["gFrameCount"] = mFrameCount;
+    var["CB"]["gEnableSpatial"] = mSpatialReuse;
+
+    bindChannels(kInputChannels, var, renderData);
+
+    var["gTemporalReservoir"] = mpTemporalReservoirNew;
+    var["gSpatialReservoir"] = mpSpatialReservoir;
+
+    uint2 targetDim = renderData.getDefaultTextureDims();
+    mpScene->raytrace(pRenderContext, mTracerSpatial.pProgram.get(), mTracerSpatial.pVars, uint3(targetDim, 1));
 }
 
 void RestirInitTemporal::prepareSpatialProgram()
 {
+    mTracerSpatial.pProgram = nullptr;
+    mTracerSpatial.pBindingTable = nullptr;
+    mTracerSpatial.pVars = nullptr;
+
+    if (mpScene)
+    {
+        ProgramDesc desc;
+        desc.addShaderModules(mpScene->getShaderModules());
+        desc.addShaderLibrary(kSpatialShaderFile);
+
+        desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
+        desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
+        desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
+
+        mTracerSpatial.pBindingTable = RtBindingTable::create(0, 0, mpScene->getGeometryCount());
+
+        ref<RtBindingTable>& bindingTable = mTracerSpatial.pBindingTable;
+        bindingTable->setRayGen(desc.addRayGen(kEntryRayGen));
+
+        mTracerSpatial.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
+    }
+}
+
+void RestirInitTemporal::executeFinalize(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    ShaderVar var = mTracerFinalize.pVars->getRootVar();
+    var["CB"]["gFrameCount"] = mFrameCount;
+
+    bindChannels(kInputChannels, var, renderData);
+    bindChannels(kOutputChannels, var, renderData);
+
+    var["gTemporalReservoirOld"] = mpTemporalReservoirOld;
+    var["gTemporalReservoirNew"] = mpTemporalReservoirNew;
+    var["gSpatialReservoir"] = mpSpatialReservoir;
+
+    uint2 targetDim = renderData.getDefaultTextureDims();
+    mpScene->raytrace(pRenderContext, mTracerFinalize.pProgram.get(), mTracerFinalize.pVars, uint3(targetDim, 1));
+}
+
+void RestirInitTemporal::prepareFinalizeProgram()
+{
+    mTracerFinalize.pProgram = nullptr;
+    mTracerFinalize.pBindingTable = nullptr;
+    mTracerFinalize.pVars = nullptr;
+
+    if (mpScene)
+    {
+        ProgramDesc desc;
+        desc.addShaderModules(mpScene->getShaderModules());
+        desc.addShaderLibrary(kFinalizeShaderFile);
+
+        desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
+        desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
+        desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
+
+        mTracerFinalize.pBindingTable = RtBindingTable::create(0, 0, mpScene->getGeometryCount());
+
+        ref<RtBindingTable>& bindingTable = mTracerFinalize.pBindingTable;
+        bindingTable->setRayGen(desc.addRayGen(kEntryRayGen));
+
+        mTracerFinalize.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
+    }
 }
 
 void RestirInitTemporal::executeInitTemporal(RenderContext* pRenderContext, const RenderData& renderData)
@@ -485,7 +569,7 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
     {
         const uint sampleCount = bufferX * bufferY;
         {
-            ShaderVar var = mTracerSpatial.pVars->getRootVar();
+            ShaderVar var = mTracerInit.pVars->getRootVar();
             mpCurrentReservoir = mpDevice->createStructuredBuffer(
                 var["gCurrentReservoir"],
                 sampleCount,
@@ -518,7 +602,7 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
         }
 
         // Spatial resources
-        /*{
+        {
             ShaderVar var = mTracerSpatial.pVars->getRootVar();
             mpSpatialReservoir = mpDevice->createStructuredBuffer(
                 var["gSpatialReservoir"],
@@ -528,7 +612,7 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
                 nullptr,
                 false
             );
-        }*/
+        }
 
         mpReservoirPrevious = mpDevice->createTexture2D(
             bufferX,
@@ -565,7 +649,7 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
 void RestirInitTemporal::prepareVars()
 {
     //const std::vector<PassTrace*> traces({&mTracerTemporal, &mTracerSpatial, &mTracerUpdateShade});
-    const std::vector<PassTrace*> traces({&mTracerTemporal});
+    const std::vector<PassTrace*> traces({&mTracerInit, &mTracerTemporal, &mTracerSpatial, &mTracerFinalize});
     for (PassTrace* trace : traces)
     {
         trace->pProgram->addDefines(mpSampleGenerator->getDefines());

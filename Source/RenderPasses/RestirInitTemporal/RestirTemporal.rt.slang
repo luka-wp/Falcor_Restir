@@ -84,7 +84,11 @@ cbuffer CB
 {
     uint gFrameCount;
     bool gInitialSamples;
+
+    bool gEnableTemporal;
 }
+
+static const uint kMaxM = 30;
 
 [shader("raygeneration")]
 void rayGen()
@@ -96,14 +100,15 @@ void rayGen()
     Reservoir currentReservoir = gCurrentReservoir[pixelIndex];
 
     // This is the 1st frame, no temporal data exists
-    if (gInitialSamples)
+    if (gInitialSamples || !gEnableTemporal)
     {
         gTemporalReservoirOld[pixelIndex] = currentReservoir;
         gTemporalReservoirNew[pixelIndex] = currentReservoir;
         return;
     }
 
-    int2 pixelPrev = uint2(((float2(pixel) / float2(frameDim)) + gMotionVector[pixel].xy) * frameDim);
+    // int2 pixelPrev = uint2(((float2(pixel) / float2(frameDim)) + gMotionVector[pixel].xy) * frameDim);
+    int2 pixelPrev = pixel + int2(gMotionVector[pixel].xy * frameDim);
     if (any(pixelPrev.xy < int2(0)) || any(pixelPrev.xy >= frameDim))
     {
         // can't do temporal reuse
@@ -118,6 +123,7 @@ void rayGen()
 
     float w = targetFunctionPDF(currentReservoir.sceneSample) / currentReservoir.sceneSample.sourcePdf;
     previousReservoir.update(currentReservoir.sceneSample, w, sampleGenerator);
+    previousReservoir.numStoredSamples_M = clamp(previousReservoir.numStoredSamples_M, 0, kMaxM);
     previousReservoir.sceneSampleWeight_W = previousReservoir.sampleRelativeWeight_w /
                                             (previousReservoir.numStoredSamples_M * targetFunctionPDF(previousReservoir.sceneSample));
 

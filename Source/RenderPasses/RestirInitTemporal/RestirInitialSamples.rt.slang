@@ -8,10 +8,6 @@ import Utils.Geometry.GeometryHelpers;
 import Utils.Sampling.SampleGenerator;
 import Rendering.Lights.LightHelpers;
 
-// static const uint kMaxBounces = MAX_BOUNCES;
-// static const bool kUseEmissiveLights = USE_EMISSIVE_LIGHTS;
-// static const bool kUseEnvLight = USE_ENV_LIGHT;
-
 static const uint kMaxBounces = 1;
 static const bool kUseEmissiveLights = true;
 static const bool kUseEnvLight = false;
@@ -387,6 +383,7 @@ void rayGen()
     Reservoir reservoir;
     reservoir.sceneSample = tracePath(pixel, frameDim);
     reservoir.numStoredSamples_M = 1;
+    reservoir.sceneSampleWeight_W = reservoir.sceneSample.sourcePdf > 0.f ? (1.f / reservoir.sceneSample.sourcePdf) : 0.f;
 
-    gOutputColor[pixel] = float4(reservoir.sceneSample.radiance, 1.0f);
+    gCurrentReservoir[pixelIndex] = reservoir;
 }

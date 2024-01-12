@@ -11,6 +11,7 @@ def render_graph_Restir3():
     g.add_edge('VBufferRT.viewW', 'RestirInitTemporal.viewW')
     g.add_edge('RestirInitTemporal.outputColor', 'AccumulatePass.input')
     g.add_edge('AccumulatePass.output', 'ToneMapper.src')
+    g.add_edge('VBufferRT.mvec', 'RestirInitTemporal.motionVector')
     g.mark_output('ToneMapper.dst')
     return g
 

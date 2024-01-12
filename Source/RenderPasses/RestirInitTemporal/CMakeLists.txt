@@ -13,6 +13,7 @@ target_sources(RestirInitTemporal PRIVATE
     RestirInitialSamples.rt.slang
     RestirTemporal.rt.slang
     RestirSpatial.rt.slang
+    RestirFinalize.rt.slang
 )
 
 target_copy_shaders(RestirInitTemporal RenderPasses/RestirInitTemporal)

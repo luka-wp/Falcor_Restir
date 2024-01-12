@@ -93,14 +93,15 @@ float jacobianDeterminant(SceneSample qNeighbor, SceneSample rSource)
 Texture2D<PackedHitInfo> gVBuffer;
 Texture2D<float4> gViewW;
 
-RWStructuredBuffer<Reservoir> gTemporalReservoir;
 RWStructuredBuffer<Reservoir> gSpatialReservoir;
+RWStructuredBuffer<Reservoir> gTemporalReservoirNew;
+RWStructuredBuffer<Reservoir> gTemporalReservoirOld;
+
 RWTexture2D<float4> gOutputColor;
 
 cbuffer CB
 {
     uint gFrameCount;
-    bool gEnableSpatial;
 }
 
 [shader("raygeneration")]
@@ -109,47 +110,13 @@ void rayGen()
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
-   
-    Reservoir temporalReservoir = gTemporalReservoir[pixelIndex];
 
-    if (!gEnableSpatial)
-    {
-        gSpatialReservoir[pixelIndex] = temporalReservoir;
-    }
+    Reservoir spatialReservoir = gSpatialReservoir[pixelIndex];
+    float3 indirectColor = spatialReservoir.sceneSample.radiance * spatialReservoir.sceneSampleWeight_W;
 
-    SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
-    const uint numNeighbors = 5;
-    const uint neighborSpan = 4;
+    Reservoir temporalOld = gTemporalReservoirOld[pixelIndex];
+    gTemporalReservoirOld[pixelIndex] = gTemporalReservoirNew[pixelIndex];
 
-    uint Z = temporalReservoir.numStoredSamples_M;
-    for (int counter = 0; counter < numNeighbors; ++counter)
-    {
-        int2 offset = int2(lerp(float2(-neighborSpan), float2(neighborSpan + 1), sampleNext2D(sampleGenerator)));
-        int2 pixelNeighbor = pixel + offset;
-        if (any(pixelNeighbor < 0) || any(pixelNeighbor >= frameDim) || all(offset == 0))
-        {
-            continue;
-        }
-
-        uint pixelNeighborIndex = getPixelIndex(pixelNeighbor, frameDim);
-        Reservoir temporalReservoirNeighbor = gTemporalReservoir[pixelNeighborIndex];
-        // TODO: Geometric similarity
-
-        float jacobian = jacobianDeterminant(temporalReservoirNeighbor.sceneSample, temporalReservoir.sceneSample);
-        float pHat = targetFunctionPDF(temporalReservoirNeighbor.sceneSample);
-        float pHatP = 0.f;
-        // TODO: Check if neighbor sample point is visible to destination visible point
-        if (jacobian != 0.f)
-        {
-            pHatP = pHat / jacobian;
-        }
-
-        temporalReservoir.merge(temporalReservoirNeighbor, pHatP, sampleGenerator);
-        Z += temporalReservoirNeighbor.numStoredSamples_M;
-    }
-
-    temporalReservoir.sceneSampleWeight_W =
-        temporalReservoir.sampleRelativeWeight_w / (Z * targetFunctionPDF(temporalReservoir.sceneSample));
-
-    gSpatialReservoir[pixelIndex] = temporalReservoir;
+    gOutputColor[pixel] = float4(indirectColor, 1.f);
+    // gOutputColor[pixel] = float4(float3(temporalOld.numStoredSamples_M), 1.f);
 }
