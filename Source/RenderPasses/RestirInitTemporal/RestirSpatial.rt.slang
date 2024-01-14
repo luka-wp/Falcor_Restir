@@ -9,89 +9,146 @@ import Utils.Sampling.SampleGenerator;
 import Rendering.Lights.LightHelpers;
 import Utils.Color.ColorHelpers;
 
-struct SceneSample
-{
-    float3 visiblePoint;
-    float3 visibleNormal;
-    float3 samplePoint;
-    float3 sampleNormal;
-    float3 radiance;
-    float sourcePdf;
-    __init()
-    {
-        visiblePoint = float3(0);
-        visibleNormal = float3(0);
-        samplePoint = float3(0);
-        sampleNormal = float3(0);
-        radiance = float3(0);
-        sourcePdf = 0.f;
-    }
-};
+/* ================ *
+ * ==== Common ==== *
+ * ==== Begin ===== *
+ * ================ */
 
 struct Reservoir
 {
-    SceneSample sceneSample;
-    float sampleRelativeWeight_w;
-    uint numStoredSamples_M;
-    float sceneSampleWeight_W;
+    float3 visiblePoint;
+    float3 visibleNormal;
 
-    __init()
+    float3 samplePoint;
+    float3 sampleNormal;
+    float3 sampleRadiance;
+
+    float weightSum;
+    uint M;
+    uint age;
+
+    static Reservoir makeReservoir( float3 inVisiblePoint, float3 inVisibleNormal, float3 inSamplePoint, float3 inSampleNormal, float3 inSampleRadiance, float inSamplePdf )
     {
-        sceneSample = SceneSample();
-        sampleRelativeWeight_w = 0.f;
-        numStoredSamples_M = 0;
-        sceneSampleWeight_W = 0.f;
+        Reservoir reservoir;
+        reservoir.visiblePoint = inVisiblePoint;
+        reservoir.visibleNormal = inVisibleNormal;
+        reservoir.samplePoint = inSamplePoint;
+        reservoir.sampleNormal = inSampleNormal;
+        reservoir.sampleRadiance = inSampleRadiance;
+        reservoir.weightSum = inSamplePdf > 0.f ? 1.f / inSamplePdf : 0.f;
+        reservoir.M = 1;
+        reservoir.age = 0;
+        return reservoir;
     }
 
-    [mutating]
-    void update(SceneSample s, float weight, inout SampleGenerator sampleGenerator)
+    static Reservoir makeEmpty()
     {
-        sampleRelativeWeight_w += weight;
-        numStoredSamples_M += 1;
-        if ((sampleNext1D(sampleGenerator) * sampleRelativeWeight_w) < weight)
+        Reservoir reservoir;
+        reservoir.visiblePoint = float3(0.f);
+        reservoir.visibleNormal = float3(0.f);
+        reservoir.samplePoint = float3(0.f);
+        reservoir.sampleNormal = float3(0.f);
+        reservoir.sampleRadiance = float3(0.f);
+        reservoir.weightSum = 0.f;
+        reservoir.M = 0;
+        reservoir.age = 0;
+        return reservoir;
+    }
+
+    bool isValid() { return M != 0; }
+
+    [mutating]
+    bool merge(Reservoir reservoir, float targetPdf, float random)
+    {
+        float risWeight = targetPdf * reservoir.weightSum * reservoir.M;
+        M += reservoir.M;
+        weightSum += risWeight;
+        bool selectSample = (random * weightSum <= risWeight);
+        if (selectSample)
         {
-            sceneSample = s;
+            samplePoint = reservoir.samplePoint;
+            sampleNormal = reservoir.sampleNormal;
+            sampleRadiance = reservoir.sampleRadiance;
+            age = reservoir.age;
         }
+
+        return selectSample;
     }
 
     [mutating]
-    void merge(Reservoir r, float pHat, inout SampleGenerator sampleGenerator)
-    {
-        uint M0 = numStoredSamples_M;
-        update(r.sceneSample, pHat * r.sceneSampleWeight_W * r.numStoredSamples_M, sampleGenerator);
-        numStoredSamples_M = M0 + r.numStoredSamples_M;
-    }
+    void finalize(float numerator, float denominator) { weightSum = (denominator == 0.f) ? 0.f : (weightSum * numerator) / denominator; }
 };
+
+Texture2D<PackedHitInfo> gVBuffer;
+Texture2D<float4> gViewW;
+
+#define is_valid(name) (is_valid_##name != 0)
+
+void getShadingDataAndMaterial(out ShadingData shadingData, out IMaterialInstance materialInstance, uint2 pixel, uint2 frameDim)
+{
+    float3 rayDir = float3(0.f);
+    { // Inlined getPrimaryRayDir
+        if (is_valid(gViewW))
+        {
+            rayDir = -gViewW[pixel].xyz;
+        }
+        rayDir = gScene.camera.computeRayPinhole(pixel, frameDim).dir;
+    }
+
+    let lod = ExplicitLodTextureSampler(0.f);
+    { // Inlined loadShadingData
+        const HitInfo hit = HitInfo(gVBuffer[pixel]);
+        VertexData v = {};
+        uint materialID = {};
+        if (hit.getType() == HitType::Triangle)
+        {
+            const TriangleHit triangleHit = hit.getTriangleHit();
+            v = gScene.getVertexData(triangleHit);
+            materialID = gScene.getMaterialID(triangleHit.instanceID);
+        }
+
+        shadingData = gScene.materials.prepareShadingData(v, materialID, -rayDir, lod);
+    }
+
+    { // Material instance
+        materialInstance = gScene.materials.getMaterialInstance(shadingData, lod);
+    }
+}
 
 uint getPixelIndex(uint2 pixel, uint2 frame)
 {
     return pixel.x + pixel.y * frame.x;
 }
 
-float targetFunctionPDF(SceneSample inSample)
-{
-    // Simpler target function
-    return luminance(inSample.radiance);
-}
+/* ================ *
+ * ==== Common ==== *
+ * ==== End ===== *
+ * ================ */
 
-float jacobianDeterminant(SceneSample qNeighbor, SceneSample rSource)
-{
-    float3 deltaQ = qNeighbor.visiblePoint - qNeighbor.samplePoint;
-    float3 deltaR = rSource.visiblePoint - qNeighbor.samplePoint;
-    float dq2 = dot(deltaQ, deltaQ);
-    float dr2 = dot(deltaR, deltaR);
-    float cosQ = dot(qNeighbor.sampleNormal, normalize(deltaQ));
-    float cosR = dot(qNeighbor.sampleNormal, normalize(deltaR));
-    float denum = cosQ * dr2;
+// float targetFunctionPDF(SceneSample inSample)
+// {
+//     // Simpler target function
+//     return luminance(inSample.radiance);
+// }
 
-    if (denum <= 0.f)
-        return 0.f;
+// float jacobianDeterminant(SceneSample qNeighbor, SceneSample rSource)
+// {
+//     float3 deltaQ = qNeighbor.visiblePoint - qNeighbor.samplePoint;
+//     float3 deltaR = rSource.visiblePoint - qNeighbor.samplePoint;
+//     float dq2 = dot(deltaQ, deltaQ);
+//     float dr2 = dot(deltaR, deltaR);
+//     float cosQ = dot(qNeighbor.sampleNormal, normalize(deltaQ));
+//     float cosR = dot(qNeighbor.sampleNormal, normalize(deltaR));
+//     float denum = cosQ * dr2;
 
-    return (cosR * dq2) / denum;
-}
+//     if (denum <= 0.f)
+//         return 0.f;
 
-Texture2D<PackedHitInfo> gVBuffer;
-Texture2D<float4> gViewW;
+//     return (cosR * dq2) / denum;
+// }
+
+// Texture2D<PackedHitInfo> gVBuffer;
+// Texture2D<float4> gViewW;
 
 RWStructuredBuffer<Reservoir> gTemporalReservoir;
 RWStructuredBuffer<Reservoir> gSpatialReservoir;
@@ -121,35 +178,35 @@ void rayGen()
     const uint numNeighbors = 5;
     const uint neighborSpan = 4;
 
-    uint Z = temporalReservoir.numStoredSamples_M;
-    for (int counter = 0; counter < numNeighbors; ++counter)
-    {
-        int2 offset = int2(lerp(float2(-neighborSpan), float2(neighborSpan + 1), sampleNext2D(sampleGenerator)));
-        int2 pixelNeighbor = pixel + offset;
-        if (any(pixelNeighbor < 0) || any(pixelNeighbor >= frameDim) || all(offset == 0))
-        {
-            continue;
-        }
+    // uint Z = temporalReservoir.numStoredSamples_M;
+    // for (int counter = 0; counter < numNeighbors; ++counter)
+    // {
+    //     int2 offset = int2(lerp(float2(-neighborSpan), float2(neighborSpan + 1), sampleNext2D(sampleGenerator)));
+    //     int2 pixelNeighbor = pixel + offset;
+    //     if (any(pixelNeighbor < 0) || any(pixelNeighbor >= frameDim) || all(offset == 0))
+    //     {
+    //         continue;
+    //     }
 
-        uint pixelNeighborIndex = getPixelIndex(pixelNeighbor, frameDim);
-        Reservoir temporalReservoirNeighbor = gTemporalReservoir[pixelNeighborIndex];
-        // TODO: Geometric similarity
+    //     uint pixelNeighborIndex = getPixelIndex(pixelNeighbor, frameDim);
+    //     Reservoir temporalReservoirNeighbor = gTemporalReservoir[pixelNeighborIndex];
+    //     // TODO: Geometric similarity
 
-        float jacobian = jacobianDeterminant(temporalReservoirNeighbor.sceneSample, temporalReservoir.sceneSample);
-        float pHat = targetFunctionPDF(temporalReservoirNeighbor.sceneSample);
-        float pHatP = 0.f;
-        // TODO: Check if neighbor sample point is visible to destination visible point
-        if (jacobian != 0.f)
-        {
-            pHatP = pHat / jacobian;
-        }
+    //     float jacobian = jacobianDeterminant(temporalReservoirNeighbor.sceneSample, temporalReservoir.sceneSample);
+    //     float pHat = targetFunctionPDF(temporalReservoirNeighbor.sceneSample);
+    //     float pHatP = 0.f;
+    //     // TODO: Check if neighbor sample point is visible to destination visible point
+    //     if (jacobian != 0.f)
+    //     {
+    //         pHatP = pHat / jacobian;
+    //     }
 
-        temporalReservoir.merge(temporalReservoirNeighbor, pHatP, sampleGenerator);
-        Z += temporalReservoirNeighbor.numStoredSamples_M;
-    }
+    //     temporalReservoir.merge(temporalReservoirNeighbor, pHatP, sampleGenerator);
+    //     Z += temporalReservoirNeighbor.numStoredSamples_M;
+    // }
 
-    temporalReservoir.sceneSampleWeight_W =
-        temporalReservoir.sampleRelativeWeight_w / (Z * targetFunctionPDF(temporalReservoir.sceneSample));
+    // temporalReservoir.sceneSampleWeight_W =
+    //     temporalReservoir.sampleRelativeWeight_w / (Z * targetFunctionPDF(temporalReservoir.sceneSample));
 
     gSpatialReservoir[pixelIndex] = temporalReservoir;
 }

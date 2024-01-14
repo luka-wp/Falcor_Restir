@@ -12,62 +12,116 @@ static const uint kMaxBounces = 1;
 static const bool kUseEmissiveLights = true;
 static const bool kUseEnvLight = false;
 
-struct SceneSample
-{
-    float3 visiblePoint;
-    float3 visibleNormal;
-    float3 samplePoint;
-    float3 sampleNormal;
-    float3 radiance;
-    float sourcePdf;
-    __init()
-    {
-        visiblePoint = float3(0);
-        visibleNormal = float3(0);
-        samplePoint = float3(0);
-        sampleNormal = float3(0);
-        radiance = float3(0);
-        sourcePdf = 0.f;
-    }
-};
+/* ================ *
+ * ==== Common ==== *
+ * ==== Begin ===== *
+ * ================ */
 
 struct Reservoir
 {
-    SceneSample sceneSample;
-    float sampleRelativeWeight_w;
-    uint numStoredSamples_M;
-    float sceneSampleWeight_W;
+    float3 visiblePoint;
+    float3 visibleNormal;
 
-    __init()
+    float3 samplePoint;
+    float3 sampleNormal;
+    float3 sampleRadiance;
+
+    float weightSum;
+    uint M;
+    uint age;
+
+    static Reservoir makeReservoir(float3 inVisiblePoint, float3 inVisibleNormal, float3 inSamplePoint, float3 inSampleNormal, float3 inSampleRadiance, float inSamplePdf)
     {
-        sceneSample = SceneSample();
-        sampleRelativeWeight_w = 0.f;
-        numStoredSamples_M = 0;
-        sceneSampleWeight_W = 0.f;
+        Reservoir reservoir;
+        reservoir.visiblePoint = inVisiblePoint;
+        reservoir.visibleNormal = inVisibleNormal;
+        reservoir.samplePoint = inSamplePoint;
+        reservoir.sampleNormal = inSampleNormal;
+        reservoir.sampleRadiance = inSampleRadiance;
+        reservoir.weightSum = inSamplePdf > 0.f ? 1.f / inSamplePdf : 0.f;
+        reservoir.M = 1;
+        reservoir.age = 0;
+        return reservoir;
     }
 
-    [mutating]
-    void update(SceneSample s, float weight, inout SampleGenerator sampleGenerator)
+    static Reservoir makeEmpty()
     {
-        sampleRelativeWeight_w += weight;
-        numStoredSamples_M += 1;
-        if ((sampleNext1D(sampleGenerator) * sampleRelativeWeight_w) < weight)
+        Reservoir reservoir;
+        reservoir.visiblePoint = float3(0.f);
+        reservoir.visibleNormal = float3(0.f);
+        reservoir.samplePoint = float3(0.f);
+        reservoir.sampleNormal = float3(0.f);
+        reservoir.sampleRadiance = float3(0.f);
+        reservoir.weightSum = 0.f;
+        reservoir.M = 0;
+        reservoir.age = 0;
+        return reservoir;
+    }
+
+    bool isValid() { return M != 0; }
+
+    [mutating]
+    bool merge(Reservoir reservoir, float targetPdf, float random)
+    {
+        float risWeight = targetPdf * reservoir.weightSum * reservoir.M;
+        M += reservoir.M;
+        weightSum += risWeight;
+        bool selectSample = (random * weightSum <= risWeight);
+        if (selectSample)
         {
-            sceneSample = s;
+            samplePoint = reservoir.samplePoint;
+            sampleNormal = reservoir.sampleNormal;
+            sampleRadiance = reservoir.sampleRadiance;
+            age = reservoir.age;
         }
+
+        return selectSample;
     }
 
     [mutating]
-    void merge(Reservoir r, float pHat, inout SampleGenerator sampleGenerator)
-    {
-        uint M0 = numStoredSamples_M;
-        update(r.sceneSample, pHat * r.sceneSampleWeight_W * r.numStoredSamples_M, sampleGenerator);
-        numStoredSamples_M = M0 + r.numStoredSamples_M;
-    }
+    void finalize(float numerator, float denominator) { weightSum = (denominator == 0.f) ? 0.f : (weightSum * numerator) / denominator; }
 };
 
 Texture2D<PackedHitInfo> gVBuffer;
 Texture2D<float4> gViewW;
+
+#define is_valid(name) (is_valid_##name != 0)
+
+void getShadingDataAndMaterial(out ShadingData shadingData, out IMaterialInstance materialInstance, uint2 pixel, uint2 frameDim)
+{
+    float3 rayDir = float3(0.f);
+    { // Inlined getPrimaryRayDir
+        if (is_valid(gViewW))
+        {
+            rayDir = -gViewW[pixel].xyz;
+        }
+        rayDir = gScene.camera.computeRayPinhole(pixel, frameDim).dir;
+    }
+
+    let lod = ExplicitLodTextureSampler(0.f);
+    { // Inlined loadShadingData
+        const HitInfo hit = HitInfo(gVBuffer[pixel]);
+        VertexData v = {};
+        uint materialID = {};
+        if (hit.getType() == HitType::Triangle)
+        {
+            const TriangleHit triangleHit = hit.getTriangleHit();
+            v = gScene.getVertexData(triangleHit);
+            materialID = gScene.getMaterialID(triangleHit.instanceID);
+        }
+
+        shadingData = gScene.materials.prepareShadingData(v, materialID, -rayDir, lod);
+    }
+
+    { // Material instance
+        materialInstance = gScene.materials.getMaterialInstance(shadingData, lod);
+    }
+}
+
+/* ================ *
+ * ==== Common ==== *
+ * ==== End ===== *
+ * ================ */
 
 RWStructuredBuffer<Reservoir> gCurrentReservoir;
 RWTexture2D<float4> gOutputColor;
@@ -84,11 +138,11 @@ struct ShadowRayData
 
 struct ScatterRayData
 {
-    float3 radiance;  ///< Accumulated outgoing radiance from path.
-    bool terminated;  ///< Set to true when path is terminated.
-    float3 thp;       ///< Current path throughput. This is updated at each path vertex.
-    uint pathLength;  ///< Path length in number of path segments (0 at origin, 1 at first secondary hit, etc.). Max 2^31.
-    float3 origin;    ///< Next path segment origin.
+    float3 radiance; ///< Accumulated outgoing radiance from path.
+    bool terminated; ///< Set to true when path is terminated.
+    float3 thp;      ///< Current path throughput. This is updated at each path vertex.
+    uint pathLength; ///< Path length in number of path segments (0 at origin, 1 at first secondary hit, etc.). Max 2^31.
+    float3 origin;   ///< Next path segment origin.
     float3 normal;
     float3 direction; ///< Next path segment direction.
     float pdf;
@@ -217,7 +271,7 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
 
     ShadingData sd = loadShadingData(hit, rayData.origin, rayData.direction, lod);
     let mi = gScene.materials.getMaterialInstance(sd, lod);
-    
+
     if (kUseEmissiveLights && rayData.pathLength > 0)
     {
         rayData.radiance += rayData.thp * mi.getProperties(sd).emission;
@@ -245,7 +299,6 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
     rayData.pathLength++;
 }
 
-#define is_valid(name) (is_valid_##name != 0)
 float3 getPrimaryRayDir(uint2 launchIndex, uint2 launchDim, const Camera camera)
 {
     if (is_valid(gViewW))
@@ -267,9 +320,11 @@ void traceScatterRay(inout ScatterRayData rayData)
     TraceRay(gScene.rtAccel, rayFlags, 0xff, 1, rayTypeCount, 1, ray, rayData);
 }
 
-SceneSample tracePath(const uint2 pixel, const uint2 frameDim)
+
+
+Reservoir tracePath(const uint2 pixel, const uint2 frameDim)
 {
-    SceneSample outSample;
+    Reservoir reservoir;
 
     const float3 primaryRayOrigin = gScene.camera.getPosition();
     const float3 primaryRayDir = getPrimaryRayDir(pixel, frameDim, gScene.camera);
@@ -282,10 +337,6 @@ SceneSample tracePath(const uint2 pixel, const uint2 frameDim)
         ShadingData sd = loadShadingData(hit, primaryRayOrigin, primaryRayDir, lod);
         let mi = gScene.materials.getMaterialInstance(sd, lod);
 
-        // Visible Point sample data
-        outSample.visiblePoint = sd.posW;
-        outSample.visibleNormal = sd.faceN;
-
         float3 rayOrigin = sd.computeRayOrigin();
 
         // {
@@ -294,7 +345,7 @@ SceneSample tracePath(const uint2 pixel, const uint2 frameDim)
         //     // Direct
         //     outColor += evalDirectAnalytic(sd, mi, sg);
         // }
-            
+
         ScatterRayData rayData = ScatterRayData(sg);
         if (!generateScatterRay(sd, mi, false, rayOrigin, rayData))
         {
@@ -302,27 +353,35 @@ SceneSample tracePath(const uint2 pixel, const uint2 frameDim)
         }
         rayData.normal = sd.faceN;
 
+        float3 visibleSurfacePosition = sd.posW;
+        float3 visibleSurfaceNormal = sd.faceN;
+        float3 secondarySurfacePosition = float3(0.f);
+        float3 secondarySurfaceNormal = float3(0.f);
         for (uint depth = 0; depth <= kMaxBounces && !rayData.terminated; depth++)
         {
             traceScatterRay(rayData);
-            // last trace will only apply emmision and will not generate new scatter ray
-            if (depth == kMaxBounces - 1 && !rayData.terminated)
+            if (depth == 0 && !rayData.terminated)
             {
-                outSample.radiance = rayData.radiance;
+                secondarySurfacePosition = rayData.origin;
+                secondarySurfaceNormal = rayData.normal;
             }
-            //TODO: I think that the sample point and norml should be saved here when depth = 0 and is not terminated
         }
 
-        outSample.samplePoint = rayData.origin;
-        outSample.sampleNormal = rayData.normal;
-        outSample.sourcePdf = rayData.pdf;
+        reservoir = Reservoir::makeReservoir(
+            visibleSurfacePosition,
+            visibleSurfaceNormal,
+            secondarySurfacePosition,
+            secondarySurfaceNormal, 
+            rayData.radiance,
+            rayData.pdf);
+        
     }
     else
     {
-        outSample.radiance = float3(0.f);
+        reservoir = Reservoir::makeEmpty();
     }
 
-    return outSample;
+    return reservoir;
 }
 
 [shader("miss")]
@@ -380,10 +439,6 @@ void rayGen()
     uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
 
-    Reservoir reservoir;
-    reservoir.sceneSample = tracePath(pixel, frameDim);
-    reservoir.numStoredSamples_M = 1;
-    reservoir.sceneSampleWeight_W = reservoir.sceneSample.sourcePdf > 0.f ? (1.f / reservoir.sceneSample.sourcePdf) : 0.f;
-
+    Reservoir reservoir = tracePath(pixel, frameDim);
     gCurrentReservoir[pixelIndex] = reservoir;
 }
