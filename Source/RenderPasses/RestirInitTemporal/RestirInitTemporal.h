@@ -100,6 +100,7 @@ private:
     ref<Buffer> mpCurrentReservoir;
     ref<Buffer> mpSpatialReservoir;
 
+    ref<Texture> mpDirectLightRadiance;
 
     //PassTrace mTracerTemporal;
     //PassTrace mTracerSpatial;

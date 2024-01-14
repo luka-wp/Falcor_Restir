@@ -123,7 +123,6 @@ const ChannelList kUpdateShadeOutputChannels = {
     {kReservoirPrevious, "gReservoirPrevious", "Previous reservoir state", false, ResourceFormat::RGBA32Float},
     {kOutputColor, "gOutputColor", "Output color", false, ResourceFormat::RGBA32Float}
 };
-
 }; // namespace
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
@@ -251,6 +250,7 @@ void RestirInitTemporal::executeInitSamples(RenderContext* pRenderContext, const
     bindChannels(kInputChannels, var, renderData);
 
     var["gCurrentReservoir"] = mpCurrentReservoir;
+    var["gDirectLightRadiance"] = mpDirectLightRadiance;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
     mpScene->raytrace(pRenderContext, mTracerInit.pProgram.get(), mTracerInit.pVars, uint3(targetDim, 1));
@@ -281,7 +281,9 @@ void RestirInitTemporal::prepareInitSamplesProgram()
         bindingTable->setMiss(1, desc.addMiss(kEntryIndirectMiss));
         bindingTable->setHitGroup(0, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", kEntryShadowAnyHit));
         bindingTable->setHitGroup(
-            1, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup(kEntryIndirectClosestHit, kEntryIndirectAnyHit)
+            1,
+            mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh),
+            desc.addHitGroup(kEntryIndirectClosestHit, kEntryIndirectAnyHit)
         );
 
         mTracerInit.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
@@ -383,6 +385,7 @@ void RestirInitTemporal::executeFinalize(RenderContext* pRenderContext, const Re
     var["gTemporalReservoirOld"] = mpTemporalReservoirOld;
     var["gTemporalReservoirNew"] = mpTemporalReservoirNew;
     var["gSpatialReservoir"] = mpSpatialReservoir;
+    var["gDirectLightRadiance"] = mpDirectLightRadiance;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
     mpScene->raytrace(pRenderContext, mTracerFinalize.pProgram.get(), mTracerFinalize.pVars, uint3(targetDim, 1));
@@ -404,10 +407,12 @@ void RestirInitTemporal::prepareFinalizeProgram()
         desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
         desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
 
-        mTracerFinalize.pBindingTable = RtBindingTable::create(0, 0, mpScene->getGeometryCount());
+        mTracerFinalize.pBindingTable = RtBindingTable::create(1, 1, mpScene->getGeometryCount());
 
         ref<RtBindingTable>& bindingTable = mTracerFinalize.pBindingTable;
         bindingTable->setRayGen(desc.addRayGen(kEntryRayGen));
+        bindingTable->setMiss(0, desc.addMiss(kEntryShadowMiss));
+        bindingTable->setHitGroup(0, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", kEntryShadowAnyHit));
 
         mTracerFinalize.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
     }
@@ -613,6 +618,16 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
                 false
             );
         }
+
+        mpDirectLightRadiance = mpDevice->createTexture2D(
+            bufferX,
+            bufferY,
+            ResourceFormat::RGBA32Float,
+            1,
+            1,
+            nullptr,
+            ResourceBindFlags::UnorderedAccess | ResourceBindFlags::RenderTarget | ResourceBindFlags::ShaderResource
+        );
 
         mpReservoirPrevious = mpDevice->createTexture2D(
             bufferX,

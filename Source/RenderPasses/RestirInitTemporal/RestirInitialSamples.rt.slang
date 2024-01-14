@@ -8,7 +8,7 @@ static const bool kUseEmissiveLights = true;
 static const bool kUseEnvLight = false;
 
 RWStructuredBuffer<Reservoir> gCurrentReservoir;
-RWTexture2D<float4> gOutputColor;
+RWTexture2D<float4> gDirectLightRadiance;
 
 cbuffer CB
 {
@@ -201,7 +201,7 @@ void traceScatterRay(inout ScatterRayData rayData)
 
 
 
-Reservoir tracePath(const uint2 pixel, const uint2 frameDim)
+Reservoir tracePath(const uint2 pixel, const uint2 frameDim, out float3 directLightRadiance)
 {
     Reservoir reservoir;
 
@@ -218,12 +218,15 @@ Reservoir tracePath(const uint2 pixel, const uint2 frameDim)
 
         float3 rayOrigin = sd.computeRayOrigin();
 
-        // {
-        //     // Emissive
-        //     outColor += mi.getProperties(sd).emission;
-        //     // Direct
-        //     outColor += evalDirectAnalytic(sd, mi, sg);
-        // }
+        {
+            float3 diRadiance = float3(0.f);
+            // Emissive
+            diRadiance += mi.getProperties(sd).emission;
+            // Direct
+            diRadiance += evalDirectAnalytic(sd, mi, sg);
+
+            directLightRadiance = diRadiance;
+        }
 
         ScatterRayData rayData = ScatterRayData(sg);
         if (!generateScatterRay(sd, mi, false, rayOrigin, rayData))
@@ -318,6 +321,9 @@ void rayGen()
     uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
 
-    Reservoir reservoir = tracePath(pixel, frameDim);
+    float3 diRadiance = float3(0.f);
+    Reservoir reservoir = tracePath(pixel, frameDim, diRadiance);
+
     gCurrentReservoir[pixelIndex] = reservoir;
+    gDirectLightRadiance[pixel] = float4(diRadiance, 1.f);
 }
