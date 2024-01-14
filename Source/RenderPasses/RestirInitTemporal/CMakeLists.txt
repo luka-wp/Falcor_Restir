@@ -10,6 +10,8 @@ target_sources(RestirInitTemporal PRIVATE
     RestirSpatialReuse.rt.slang
     RestirUpdateReservoirShade.rt.slang
 
+    ReSTIRCommon.slangh
+
     RestirInitialSamples.rt.slang
     RestirTemporal.rt.slang
     RestirSpatial.rt.slang
