@@ -107,16 +107,16 @@ struct ShadowRayPayload
 //     }
 // };
 
-// float4 updateReservoir(float4 reservoir, int lightToSample, float weight, SampleGenerator sampleGenerator)
-// {
-//     reservoir.x = reservoir.x + weight; // r.w_sum
-//     reservoir.z = reservoir.z + 1.0f;   // r.M
-//     if (sampleNext1D(sampleGenerator) < weight / reservoir.x)
-//     {
-//         reservoir.y = lightToSample; // r.y
-//     }
-//     return reservoir;
-// }
+float4 updateReservoir(float4 reservoir, int lightToSample, float weight, SampleGenerator sampleGenerator)
+{
+    reservoir.x = reservoir.x + weight; // r.w_sum
+    reservoir.z = reservoir.z + 1.0f;   // r.M
+    if (sampleNext1D(sampleGenerator) < weight / reservoir.x)
+    {
+        reservoir.y = lightToSample; // r.y
+    }
+    return reservoir;
+}
 
 // #define is_valid(name) (is_valid_##name != 0)
 // float3 getPrimaryRayDir(uint2 pixelXY, uint2 frameDim, const Camera camera)

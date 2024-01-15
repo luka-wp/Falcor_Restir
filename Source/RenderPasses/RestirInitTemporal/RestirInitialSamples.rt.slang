@@ -2,12 +2,11 @@
 
 #include "ReSTIRCommon.slangh"
 
-
-static const uint kMaxBounces = 1;
-static const bool kUseEmissiveLights = true;
+static const uint kMaxBounces = 2;
+static const bool kUseEmissiveLights = false;
 static const bool kUseEnvLight = false;
 
-RWStructuredBuffer<Reservoir> gCurrentReservoir;
+RWStructuredBuffer<GIReservoir> gInitialSamplesReservoir_GI;
 RWTexture2D<float4> gDirectLightRadiance;
 
 cbuffer CB
@@ -90,14 +89,20 @@ bool traceShadowRay(float3 origin, float3 dir, float distance)
     return rayData.visible;
 }
 
-float3 evalDirectAnalytic(const ShadingData sd, const IMaterialInstance mi, inout SampleGenerator sg)
+float3 evalDirectAnalytic(
+    const ShadingData sd,
+    const IMaterialInstance mi,
+    bool visibilityTest,
+    inout SampleGenerator sg,
+    inout int lightIdx
+)
 {
     const uint lightCount = gScene.getLightCount();
     if (lightCount == 0)
         return float3(0.f);
 
     // Pick one of the analytic light sources randomly with equal probability.
-    const uint lightIndex = min(uint(sampleNext1D(sg) * lightCount), lightCount - 1);
+    const uint lightIndex = lightIdx != -1 ? lightIdx : min(uint(sampleNext1D(sg) * lightCount), lightCount - 1);
     float invPdf = lightCount; // Light selection pdf = 1.0 / lightCount.
 
     // Sample local light source.
@@ -117,11 +122,15 @@ float3 evalDirectAnalytic(const ShadingData sd, const IMaterialInstance mi, inou
     const float3 origin = computeRayOrigin(sd.posW, dot(sd.faceN, ls.dir) >= 0.f ? sd.faceN : -sd.faceN);
 
     // Test visibility by tracing a shadow ray.
-    bool V = traceShadowRay(origin, ls.dir, ls.distance);
-    if (!V)
-        return float3(0.f);
+    if (visibilityTest)
+    {
+        bool V = traceShadowRay(origin, ls.dir, ls.distance);
+        if (!V)
+            return float3(0.f);
+    }
 
     // Evaluate contribution.
+    lightIdx = lightIndex;
     return mi.eval(sd, ls.dir, sg) * ls.Li * invPdf;
 }
 
@@ -165,7 +174,8 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
     float3 rayOrigin;
     rayOrigin = sd.computeRayOrigin();
 
-    float3 Lr = evalDirectAnalytic(sd, mi, rayData.sg);
+    int lightIndex = -1;
+    float3 Lr = evalDirectAnalytic(sd, mi, true, rayData.sg, lightIndex);
     rayData.radiance = rayData.thp * Lr;
 
     if (!generateScatterRay(sd, mi, false, rayOrigin, rayData))
@@ -199,11 +209,11 @@ void traceScatterRay(inout ScatterRayData rayData)
     TraceRay(gScene.rtAccel, rayFlags, 0xff, 1, rayTypeCount, 1, ray, rayData);
 }
 
-
-
-Reservoir tracePath(const uint2 pixel, const uint2 frameDim, out float3 directLightRadiance)
+float3 tracePath(const uint2 pixel, const uint2 frameDim, out DIReservoir outDIReservoir, out GIReservoir outGIReservoir)
 {
-    Reservoir reservoir;
+    DIReservoir diReservoir = DIReservoir::makeEmpty();
+    GIReservoir giReservoir;
+    float3 outRadiance = float3(0.f);
 
     const float3 primaryRayOrigin = gScene.camera.getPosition();
     const float3 primaryRayDir = getPrimaryRayDir(pixel, frameDim, gScene.camera);
@@ -218,14 +228,31 @@ Reservoir tracePath(const uint2 pixel, const uint2 frameDim, out float3 directLi
 
         float3 rayOrigin = sd.computeRayOrigin();
 
+        // Initial DI sample
         {
             float3 diRadiance = float3(0.f);
             // Emissive
-            diRadiance += mi.getProperties(sd).emission;
+            if (kUseEmissiveLights)
+            {
+                diRadiance += mi.getProperties(sd).emission;
+            }
             // Direct
-            diRadiance += evalDirectAnalytic(sd, mi, sg);
+            float pHat = 0.f;
+            const int kMaxDILightSamples = 8;
+            for (int i = 0; i < min(gScene.lightCount, kMaxDILightSamples); ++i)
+            {
+                int lightIndex = -1;
+                float3 lightRadiance = evalDirectAnalytic(sd, mi, false, sg, lightIndex);
+                pHat = luminance(lightRadiance);
+                diReservoir.update(lightIndex, pHat, sampleNext1D(sg));
+            }
 
-            directLightRadiance = diRadiance;
+            float3 lightRadiance = evalDirectAnalytic(sd, mi, true, sg, diReservoir.lightIndex);
+            pHat = luminance(lightRadiance);
+            diReservoir.finalize(pHat);
+
+            diRadiance += lightRadiance * diReservoir.W;
+            outRadiance = diRadiance;
         }
 
         ScatterRayData rayData = ScatterRayData(sg);
@@ -249,21 +276,19 @@ Reservoir tracePath(const uint2 pixel, const uint2 frameDim, out float3 directLi
             }
         }
 
-        reservoir = Reservoir::makeReservoir(
-            visibleSurfacePosition,
-            visibleSurfaceNormal,
-            secondarySurfacePosition,
-            secondarySurfaceNormal, 
-            rayData.radiance,
-            rayData.pdf);
-        
+        giReservoir = GIReservoir::makeReservoir(
+            visibleSurfacePosition, visibleSurfaceNormal, secondarySurfacePosition, secondarySurfaceNormal, rayData.radiance, rayData.pdf
+        );
     }
     else
     {
-        reservoir = Reservoir::makeEmpty();
+        giReservoir = GIReservoir::makeEmpty();
     }
 
-    return reservoir;
+    outDIReservoir = diReservoir;
+    outGIReservoir = giReservoir;
+
+    return outRadiance;
 }
 
 [shader("miss")]
@@ -321,9 +346,10 @@ void rayGen()
     uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
 
-    float3 diRadiance = float3(0.f);
-    Reservoir reservoir = tracePath(pixel, frameDim, diRadiance);
+    DIReservoir diReservoir;
+    GIReservoir giReservoir;
+    float3 diRadiance = tracePath(pixel, frameDim, diReservoir, giReservoir);
 
-    gCurrentReservoir[pixelIndex] = reservoir;
+    gInitialSamplesReservoir_GI[pixelIndex] = giReservoir;
     gDirectLightRadiance[pixel] = float4(diRadiance, 1.f);
 }

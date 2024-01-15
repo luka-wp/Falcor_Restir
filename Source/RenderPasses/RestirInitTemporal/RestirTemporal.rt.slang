@@ -3,9 +3,9 @@
 #include "ReSTIRCommon.slangh"
 
 Texture2D<float4> gMotionVector;
-RWStructuredBuffer<Reservoir> gTemporalReservoirOld;
-RWStructuredBuffer<Reservoir> gTemporalReservoirNew;
-RWStructuredBuffer<Reservoir> gCurrentReservoir;
+RWStructuredBuffer<GIReservoir> gTemporalReservoirOld_GI;
+RWStructuredBuffer<GIReservoir> gTemporalReservoirNew_GI;
+RWStructuredBuffer<GIReservoir> gInitialSamplesReservoir_GI;
 RWTexture2D<float4> gOutputColor;
 
 cbuffer CB
@@ -33,24 +33,17 @@ int2 temporalResamplingOffset(int sampleIdx, int radius)
     return int2(tmp0, tmp0 * tmp1) * int2(tmp2, tmp3) * radius;
 }
 
-[shader("raygeneration")]
-void rayGen()
+GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputReservoir, SampleGenerator sampleGenerator)
 {
-    uint2 pixel = DispatchRaysIndex().xy;
-    uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
-    Reservoir inputReservoir = gCurrentReservoir[pixelIndex];
-
     ShadingData inputShadingData;
     IMaterialInstance inputMaterialInstance;
     getShadingDataAndMaterial(inputShadingData, inputMaterialInstance, pixel, frameDim);
 
-    SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
-
     int2 prevPos = pixel + int2(gMotionVector[pixel].xy * frameDim);
 
     uint2 pixelPrev;
-    Reservoir temporalReservoir;
+    GIReservoir temporalReservoir;
     bool foundTemporalReservoir = false;
 
     const int temporalSampleStartIdx = int(sampleNext1D(sampleGenerator) * 8);
@@ -80,10 +73,11 @@ void rayGen()
         }
 
         uint idxIndex = getPixelIndex(idx, frameDim);
-        temporalReservoir = gTemporalReservoirOld[idxIndex];
+        temporalReservoir = gTemporalReservoirOld_GI[idxIndex];
 
         // Geometric similarity
-        bool geometricSimilarity = validateGeometricSimilarity( inputReservoir.visiblePoint,
+        bool geometricSimilarity = validateGeometricSimilarity(
+            inputReservoir.visiblePoint,
             inputReservoir.visibleNormal,
             temporalReservoir.visiblePoint,
             temporalReservoir.visibleNormal,
@@ -105,7 +99,7 @@ void rayGen()
         break;
     }
 
-    Reservoir curReservoir = Reservoir::makeEmpty();
+    GIReservoir curReservoir = GIReservoir::makeEmpty();
 
     float selectedTargetPdf = 0;
     if (inputReservoir.isValid())
@@ -152,5 +146,23 @@ void rayGen()
     float normalizationDenominator = selectedTargetPdf * curReservoir.M;
     curReservoir.finalize(normalizationNumerator, normalizationDenominator);
 
-    gTemporalReservoirNew[pixelIndex] = curReservoir;
+    return curReservoir;
+}
+
+[shader("raygeneration")]
+void rayGen()
+{
+    uint2 pixel = DispatchRaysIndex().xy;
+    uint2 frameDim = DispatchRaysDimensions().xy;
+    uint pixelIndex = getPixelIndex(pixel, frameDim);
+    GIReservoir giInputReservoir = gInitialSamplesReservoir_GI[pixelIndex];
+    SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
+
+    GIReservoir giOutputReservoir = giInputReservoir;
+    if (gEnableTemporal)
+    {
+        giOutputReservoir = giTemporalResampling(pixel, frameDim, giInputReservoir, sampleGenerator);
+    }
+
+    gTemporalReservoirNew_GI[pixelIndex] = giOutputReservoir;
 }

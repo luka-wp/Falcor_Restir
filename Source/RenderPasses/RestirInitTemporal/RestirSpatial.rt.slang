@@ -2,8 +2,8 @@
 #include "Utils/Math/MathConstants.slangh"
 #include "ReSTIRCommon.slangh"
 
-RWStructuredBuffer<Reservoir> gTemporalReservoir;
-RWStructuredBuffer<Reservoir> gSpatialReservoir;
+RWStructuredBuffer<GIReservoir> gTemporalReservoir_GI;
+RWStructuredBuffer<GIReservoir> gSpatialReservoir_GI;
 RWTexture2D<float4> gOutputColor;
 
 cbuffer CB
@@ -29,15 +29,9 @@ int2 calculateSpatialResamplingOffset(int sampleIdx, float radius)
     return int2(float2(offsets[sampleIdx]) * radius);
 }
 
-[shader("raygeneration")]
-void rayGen()
+GIReservoir giSpatialResampling(uint2 pixel, uint2 frameDim, GIReservoir inputReservoir, SampleGenerator sampleGenerator)
 {
-    uint2 pixel = DispatchRaysIndex().xy;
-    uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
-    SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
-    Reservoir inputReservoir = gTemporalReservoir[pixelIndex];
-
     ShadingData inputShadingData;
     IMaterialInstance inputMaterialInstance;
     getShadingDataAndMaterial(inputShadingData, inputMaterialInstance, pixel, frameDim);
@@ -45,7 +39,7 @@ void rayGen()
     const uint numSamples = 15;
     const uint neighborSpan = 4;
 
-    Reservoir curReservoir = Reservoir::makeEmpty();
+    GIReservoir curReservoir = GIReservoir::makeEmpty();
 
     float selectedTargetPdf = 0.f;
     if (inputReservoir.isValid())
@@ -67,7 +61,7 @@ void rayGen()
         idx = clamp(idx, int2(0), frameDim - 1);
 
         uint idxIndex = getPixelIndex(idx, frameDim);
-        Reservoir neighborReservoir = gTemporalReservoir[idxIndex];
+        GIReservoir neighborReservoir = gTemporalReservoir_GI[idxIndex];
 
         bool geometricSimilarity = validateGeometricSimilarity(
             inputReservoir.visiblePoint,
@@ -108,5 +102,23 @@ void rayGen()
     float denominator = curReservoir.M * selectedTargetPdf;
     curReservoir.finalize(numerator, denominator);
 
-    gSpatialReservoir[pixelIndex] = curReservoir;
+    return curReservoir;
+}
+
+[shader("raygeneration")]
+void rayGen()
+{
+    uint2 pixel = DispatchRaysIndex().xy;
+    uint2 frameDim = DispatchRaysDimensions().xy;
+    uint pixelIndex = getPixelIndex(pixel, frameDim);
+    SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
+    GIReservoir giInputReservoir = gTemporalReservoir_GI[pixelIndex];
+
+    GIReservoir giOutputReservoir = giInputReservoir;
+    if (gEnableSpatial)
+    {
+        giOutputReservoir = giSpatialResampling(pixel, frameDim, giInputReservoir, sampleGenerator);
+    }
+
+    gSpatialReservoir_GI[pixelIndex] = giOutputReservoir;
 }

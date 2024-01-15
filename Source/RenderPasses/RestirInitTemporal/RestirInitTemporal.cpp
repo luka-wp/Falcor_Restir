@@ -249,7 +249,7 @@ void RestirInitTemporal::executeInitSamples(RenderContext* pRenderContext, const
 
     bindChannels(kInputChannels, var, renderData);
 
-    var["gCurrentReservoir"] = mpCurrentReservoir;
+    var["gInitialSamplesReservoir_GI"] = mpInitialSamplesReservoir_GI;
     var["gDirectLightRadiance"] = mpDirectLightRadiance;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
@@ -299,9 +299,9 @@ void RestirInitTemporal::executeTemporal(RenderContext* pRenderContext, const Re
 
     bindChannels(kInputChannels, var, renderData);
 
-    var["gTemporalReservoirOld"] = mpTemporalReservoirOld;
-    var["gTemporalReservoirNew"] = mpTemporalReservoirNew;
-    var["gCurrentReservoir"] = mpCurrentReservoir;
+    var["gTemporalReservoirOld_GI"] = mpTemporalReservoirOld_GI;
+    var["gTemporalReservoirNew_GI"] = mpTemporalReservoirNew_GI;
+    var["gInitialSamplesReservoir_GI"] = mpInitialSamplesReservoir_GI;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
     mpScene->raytrace(pRenderContext, mTracerTemporal.pProgram.get(), mTracerTemporal.pVars, uint3(targetDim, 1));
@@ -342,8 +342,8 @@ void RestirInitTemporal::executeSpatial(RenderContext* pRenderContext, const Ren
 
     bindChannels(kInputChannels, var, renderData);
 
-    var["gTemporalReservoir"] = mpTemporalReservoirNew;
-    var["gSpatialReservoir"] = mpSpatialReservoir;
+    var["gTemporalReservoir_GI"] = mpTemporalReservoirNew_GI;
+    var["gSpatialReservoir_GI"] = mpSpatialReservoir_GI;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
     mpScene->raytrace(pRenderContext, mTracerSpatial.pProgram.get(), mTracerSpatial.pVars, uint3(targetDim, 1));
@@ -382,9 +382,9 @@ void RestirInitTemporal::executeFinalize(RenderContext* pRenderContext, const Re
     bindChannels(kInputChannels, var, renderData);
     bindChannels(kOutputChannels, var, renderData);
 
-    var["gTemporalReservoirOld"] = mpTemporalReservoirOld;
-    var["gTemporalReservoirNew"] = mpTemporalReservoirNew;
-    var["gSpatialReservoir"] = mpSpatialReservoir;
+    var["gTemporalReservoirOld_GI"] = mpTemporalReservoirOld_GI;
+    var["gTemporalReservoirNew_GI"] = mpTemporalReservoirNew_GI;
+    var["gSpatialReservoir_GI"] = mpSpatialReservoir_GI;
     var["gDirectLightRadiance"] = mpDirectLightRadiance;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
@@ -435,8 +435,8 @@ void RestirInitTemporal::executeInitTemporal(RenderContext* pRenderContext, cons
     /*var["gReservoirPrevious"] = mpReservoirPrevious;
     var["gReservoirCurrent"] = mpReservoirCurrent;*/
 
-    var["gPreviousReservoir"] = mpTemporalReservoirOld;
-    var["gCurrentReservoir"] = mpCurrentReservoir;
+    var["gPreviousReservoir"] = mpTemporalReservoirOld_GI;
+    var["gCurrentReservoir"] = mpInitialSamplesReservoir_GI;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
     mpScene->raytrace(pRenderContext, mTracerTemporal.pProgram.get(), mTracerTemporal.pVars, uint3(targetDim, 1));
@@ -575,8 +575,8 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
         const uint sampleCount = bufferX * bufferY;
         {
             ShaderVar var = mTracerInit.pVars->getRootVar();
-            mpCurrentReservoir = mpDevice->createStructuredBuffer(
-                var["gCurrentReservoir"],
+            mpInitialSamplesReservoir_GI = mpDevice->createStructuredBuffer(
+                var["gInitialSamplesReservoir_GI"],
                 sampleCount,
                 ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
                 MemoryType::DeviceLocal,
@@ -587,8 +587,8 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
         // Temporal resources
         {
             ShaderVar var = mTracerTemporal.pVars->getRootVar();
-            mpTemporalReservoirOld = mpDevice->createStructuredBuffer(
-                var["gTemporalReservoirOld"],
+            mpTemporalReservoirOld_GI = mpDevice->createStructuredBuffer(
+                var["gTemporalReservoirOld_GI"],
                 sampleCount,
                 ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
                 MemoryType::DeviceLocal,
@@ -596,8 +596,8 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
                 false
             );
 
-            mpTemporalReservoirNew = mpDevice->createStructuredBuffer(
-                var["gTemporalReservoirNew"],
+            mpTemporalReservoirNew_GI = mpDevice->createStructuredBuffer(
+                var["gTemporalReservoirNew_GI"],
                 sampleCount,
                 ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
                 MemoryType::DeviceLocal,
@@ -609,8 +609,8 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
         // Spatial resources
         {
             ShaderVar var = mTracerSpatial.pVars->getRootVar();
-            mpSpatialReservoir = mpDevice->createStructuredBuffer(
-                var["gSpatialReservoir"],
+            mpSpatialReservoir_GI = mpDevice->createStructuredBuffer(
+                var["gSpatialReservoir_GI"],
                 sampleCount,
                 ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
                 MemoryType::DeviceLocal,

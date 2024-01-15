@@ -95,12 +95,18 @@ private:
     ref<Scene> mpScene;
     ref<SampleGenerator> mpSampleGenerator;
 
-    ref<Buffer> mpTemporalReservoirOld;
-    ref<Buffer> mpTemporalReservoirNew;
-    ref<Buffer> mpCurrentReservoir;
-    ref<Buffer> mpSpatialReservoir;
-
     ref<Texture> mpDirectLightRadiance;
+
+    // >> Direct Illumination >> //
+    // << Direct Illumination << //
+
+    // >> Global Illumination >> //
+    ref<Buffer> mpTemporalReservoirOld_GI;
+    ref<Buffer> mpTemporalReservoirNew_GI;
+    ref<Buffer> mpInitialSamplesReservoir_GI;
+    ref<Buffer> mpSpatialReservoir_GI;
+    // << Global Illumination << //
+
 
     //PassTrace mTracerTemporal;
     //PassTrace mTracerSpatial;

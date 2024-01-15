@@ -14,7 +14,95 @@ import Utils.Color.ColorHelpers;
  * ==== Begin ===== *
  * ================ */
 
-struct Reservoir
+struct DIReservoir
+{
+    int lightIndex;
+    // uint lightData;
+    // uint uvData;
+    float weightSum;
+    // float targetPdf;
+    int M;
+    float W;
+    // float3 packedVisibility;
+    // int2 spatialDistance;
+    // uint age;
+
+    static DIReservoir makeEmpty()
+    {
+        DIReservoir reservoir;
+        reservoir.lightIndex = -1;
+        // reservoir.lightData = 0;
+        // reservoir.uvData = 0;
+        reservoir.weightSum = 0.f;
+        // reservoir.targetPdf = 0.f;
+        reservoir.M = 0;
+        reservoir.W = 0.f;
+        // reservoir.packedVisibility = float3(0.f, 0.f, 0.f);
+        // reservoir.spatialDistance = int2(0, 0);
+        // reservoir.age = 0;
+        return reservoir;
+    }
+
+    [mutating]
+    void update(int inLightIndex, float weight, float random)
+    {
+        weightSum += weight;
+        M += 1;
+        if (random * weightSum < weight)
+        {
+            lightIndex = inLightIndex;
+        }
+    }
+
+    [mutating]
+    void finalize(float pHat)
+    {
+        if (pHat == 0.f)
+        {
+            W = 0.f;
+        }
+        else
+        {
+            W = weightSum / (pHat * M);
+        }
+    }
+
+    // [mutating]
+    // void storeVisibility(float3 inVisibility, bool discardIfInvisible)
+    // {
+    //     packedVisibility = inVisibility;
+    //     spatialDistance = int2(0, 0);
+    //     age = 0;
+    //     if (discardIfInvisible && all(inVisibility == float3(0.f)))
+    //     {
+    //         lightData = 0;
+    //         weightSum = 0.f;
+    //     }
+    // }
+
+    // bool getVisibility(uint maxAge, float maxDistance, out float3 outVisibility)
+    // {
+    //     if (age > 0 && age <= maxAge && (float(dot(spatialDistance, spatialDistance)) < (maxDistance * maxDistance)))
+    //     {
+    //         outVisibility = packedVisibility;
+    //         return true;
+    //     }
+    //     outVisibility = float3(0.f);
+    //     return false;
+    // }
+
+    // bool isValid()
+    // {
+    //     return lightData != 0;
+    // }
+
+    // float getInvPdf()
+    // {
+    //     return weightSum;
+    // }
+};
+
+struct GIReservoir
 {
     float3 visiblePoint;
     float3 visibleNormal;
@@ -27,7 +115,7 @@ struct Reservoir
     uint M;
     uint age;
 
-    static Reservoir makeReservoir(
+    static GIReservoir makeReservoir(
         float3 inVisiblePoint,
         float3 inVisibleNormal,
         float3 inSamplePoint,
@@ -36,7 +124,7 @@ struct Reservoir
         float inSamplePdf
     )
     {
-        Reservoir reservoir;
+        GIReservoir reservoir;
         reservoir.visiblePoint = inVisiblePoint;
         reservoir.visibleNormal = inVisibleNormal;
         reservoir.samplePoint = inSamplePoint;
@@ -48,9 +136,9 @@ struct Reservoir
         return reservoir;
     }
 
-    static Reservoir makeEmpty()
+    static GIReservoir makeEmpty()
     {
-        Reservoir reservoir;
+        GIReservoir reservoir;
         reservoir.visiblePoint = float3(0.f);
         reservoir.visibleNormal = float3(0.f);
         reservoir.samplePoint = float3(0.f);
@@ -65,7 +153,7 @@ struct Reservoir
     bool isValid() { return M != 0; }
 
     [mutating]
-    bool merge(Reservoir reservoir, float targetPdf, float random)
+    bool merge(GIReservoir reservoir, float targetPdf, float random)
     {
         float risWeight = targetPdf * reservoir.weightSum * reservoir.M;
         M += reservoir.M;
@@ -152,7 +240,7 @@ void calculatePartialJacobian(
     cosineEmissionAngle = saturate(dot(sampleNormal, vec / distanceToSurface));
 }
 
-float calculateJacobian(float3 reciverPos, float3 neighborReciverPos, Reservoir neighborReservoir)
+float calculateJacobian(float3 reciverPos, float3 neighborReciverPos, GIReservoir neighborReservoir)
 {
     float originalDistance, originalCosine;
     float newDistance, newCosine;

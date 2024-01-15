@@ -2,9 +2,9 @@
 #include "Utils/Math/MathConstants.slangh"
 #include "ReSTIRCommon.slangh"
 
-RWStructuredBuffer<Reservoir> gSpatialReservoir;
-RWStructuredBuffer<Reservoir> gTemporalReservoirNew;
-RWStructuredBuffer<Reservoir> gTemporalReservoirOld;
+RWStructuredBuffer<GIReservoir> gSpatialReservoir_GI;
+RWStructuredBuffer<GIReservoir> gTemporalReservoirNew_GI;
+RWStructuredBuffer<GIReservoir> gTemporalReservoirOld_GI;
 
 Texture2D<float4> gDirectLightRadiance;
 
@@ -76,7 +76,7 @@ void rayGen()
 
     totalRadiance += gDirectLightRadiance[pixel].xyz;
 
-    Reservoir spatialReservoir = gSpatialReservoir[pixelIndex];
+    GIReservoir spatialReservoir = gSpatialReservoir_GI[pixelIndex];
     float3 woDelta = spatialReservoir.samplePoint - shadingData.posW;
     float woDist = length(woDelta);
     float3 wo = woDelta / woDist;
@@ -90,8 +90,8 @@ void rayGen()
     }
 
 
-    Reservoir temporalOld = gTemporalReservoirOld[pixelIndex];
-    gTemporalReservoirOld[pixelIndex] = gTemporalReservoirNew[pixelIndex];
+    GIReservoir temporalOld = gTemporalReservoirOld_GI[pixelIndex];
+    gTemporalReservoirOld_GI[pixelIndex] = gTemporalReservoirNew_GI[pixelIndex];
 
     gOutputColor[pixel] = float4(totalRadiance, 1.f);
 }
