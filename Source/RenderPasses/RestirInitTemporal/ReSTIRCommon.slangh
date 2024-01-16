@@ -55,6 +55,14 @@ struct DIReservoir
     }
 
     [mutating]
+    void merge(DIReservoir reservoir, float weight, float random)
+    {
+        int currentM = M;
+        update(reservoir.lightIndex, weight * reservoir.W * reservoir.M, random);
+        M = currentM + reservoir.M;
+    }
+
+    [mutating]
     void finalize(float pHat)
     {
         if (pHat == 0.f)
@@ -66,40 +74,6 @@ struct DIReservoir
             W = weightSum / (pHat * M);
         }
     }
-
-    // [mutating]
-    // void storeVisibility(float3 inVisibility, bool discardIfInvisible)
-    // {
-    //     packedVisibility = inVisibility;
-    //     spatialDistance = int2(0, 0);
-    //     age = 0;
-    //     if (discardIfInvisible && all(inVisibility == float3(0.f)))
-    //     {
-    //         lightData = 0;
-    //         weightSum = 0.f;
-    //     }
-    // }
-
-    // bool getVisibility(uint maxAge, float maxDistance, out float3 outVisibility)
-    // {
-    //     if (age > 0 && age <= maxAge && (float(dot(spatialDistance, spatialDistance)) < (maxDistance * maxDistance)))
-    //     {
-    //         outVisibility = packedVisibility;
-    //         return true;
-    //     }
-    //     outVisibility = float3(0.f);
-    //     return false;
-    // }
-
-    // bool isValid()
-    // {
-    //     return lightData != 0;
-    // }
-
-    // float getInvPdf()
-    // {
-    //     return weightSum;
-    // }
 };
 
 struct GIReservoir
@@ -292,6 +266,96 @@ bool validateGeometricSimilarity(float3 positionA, float3 normalA, float3 positi
     }
 
     return true;
+}
+
+struct ShadowRayData
+{
+    bool visible;
+};
+
+bool traceShadowRay(float3 origin, float3 dir, float distance)
+{
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = dir;
+    ray.TMin = 0.f;
+    ray.TMax = distance;
+
+    ShadowRayData rayData;
+    rayData.visible = false; // Set to true by miss shader if ray is not terminated before
+    TraceRay(
+        gScene.rtAccel,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+        0xff /* instanceInclusionMask */,
+        0 /* hitIdx */,
+        rayTypeCount,
+        0 /* missIdx */,
+        ray,
+        rayData
+    );
+
+    return rayData.visible;
+}
+
+float3 evalDirectAnalytic(
+    const ShadingData sd,
+    const IMaterialInstance mi,
+    bool visibilityTest,
+    inout SampleGenerator sg,
+    inout int lightIdx
+)
+{
+    const uint lightCount = gScene.getLightCount();
+    if (lightCount == 0)
+        return float3(0.f);
+
+    // Pick one of the analytic light sources randomly with equal probability.
+    const uint lightIndex = lightIdx != -1 ? lightIdx : min(uint(sampleNext1D(sg) * lightCount), lightCount - 1);
+    float invPdf = lightCount; // Light selection pdf = 1.0 / lightCount.
+
+    // Sample local light source.
+    AnalyticLightSample ls;
+    if (!sampleLight(sd.posW, gScene.getLight(lightIndex), sg, ls))
+        return float3(0.f);
+
+    // Reject sample if not in the hemisphere of a BSDF lobe.
+    const uint lobeTypes = mi.getLobeTypes(sd);
+    const bool hasReflection = lobeTypes & uint(LobeType::Reflection);
+    const bool hasTransmission = lobeTypes & uint(LobeType::Transmission);
+    float NdotL = dot(sd.getOrientedFaceNormal(), ls.dir);
+    if ((NdotL <= kMinCosTheta && !hasTransmission) || (NdotL >= -kMinCosTheta && !hasReflection))
+        return float3(0.f);
+
+    // Get origin with offset applied in direction of the geometry normal to avoid self-intersection.
+    const float3 origin = computeRayOrigin(sd.posW, dot(sd.faceN, ls.dir) >= 0.f ? sd.faceN : -sd.faceN);
+
+    // Test visibility by tracing a shadow ray.
+    if (visibilityTest)
+    {
+        bool V = traceShadowRay(origin, ls.dir, ls.distance);
+        if (!V)
+            return float3(0.f);
+    }
+
+    // Evaluate contribution.
+    lightIdx = lightIndex;
+    return mi.eval(sd, ls.dir, sg) * ls.Li * invPdf;
+}
+
+[shader("miss")]
+void shadowMiss(inout ShadowRayData rayData)
+{
+    rayData.visible = true;
+}
+
+[shader("anyhit")]
+void shadowAnyHit(inout ShadowRayData rayData, BuiltInTriangleIntersectionAttributes attribs)
+{
+    GeometryInstanceID instanceID = getGeometryInstanceID();
+    VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
+    const uint materialID = gScene.getMaterialID(instanceID);
+    if (gScene.materials.alphaTest(v, materialID, 0.f))
+        IgnoreHit();
 }
 
 /* ================ *

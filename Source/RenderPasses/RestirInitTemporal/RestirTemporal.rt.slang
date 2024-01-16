@@ -3,9 +3,15 @@
 #include "ReSTIRCommon.slangh"
 
 Texture2D<float4> gMotionVector;
+
+RWStructuredBuffer<DIReservoir> gTemporalReservoirOld_DI;
+RWStructuredBuffer<DIReservoir> gTemporalReservoirNew_DI;
+RWStructuredBuffer<DIReservoir> gInitialSamplesReservoir_DI;
+
 RWStructuredBuffer<GIReservoir> gTemporalReservoirOld_GI;
 RWStructuredBuffer<GIReservoir> gTemporalReservoirNew_GI;
 RWStructuredBuffer<GIReservoir> gInitialSamplesReservoir_GI;
+
 RWTexture2D<float4> gOutputColor;
 
 cbuffer CB
@@ -33,7 +39,42 @@ int2 temporalResamplingOffset(int sampleIdx, int radius)
     return int2(tmp0, tmp0 * tmp1) * int2(tmp2, tmp3) * radius;
 }
 
-GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputReservoir, SampleGenerator sampleGenerator)
+DIReservoir diTemporalResampling(uint2 pixel, uint2 frameDim, DIReservoir inputReservoir, inout SampleGenerator sampleGenerator)
+{
+    uint pixelIndex = getPixelIndex(pixel, frameDim);
+    int2 prevPos = pixel + int2(gMotionVector[pixel].xy * frameDim);
+    ShadingData shadingData;
+    IMaterialInstance materialInstance;
+    getShadingDataAndMaterial(shadingData, materialInstance, pixel, frameDim);
+
+    if (any(prevPos < 0) || any(prevPos >= frameDim) || gInitialSamples)
+    {
+        return inputReservoir;
+    }
+
+    uint prevPosIndex = getPixelIndex(prevPos, frameDim);
+    DIReservoir previousReservoir = gTemporalReservoirOld_DI[prevPosIndex];
+
+    int lightIndex;
+    float pHat = 0.f;
+    DIReservoir temporalReservoir = DIReservoir::makeEmpty();
+
+    lightIndex = inputReservoir.lightIndex;
+    pHat = luminance(evalDirectAnalytic(shadingData, materialInstance, false, sampleGenerator, lightIndex));
+    temporalReservoir.merge(inputReservoir, pHat, sampleNext1D(sampleGenerator));
+
+    lightIndex = previousReservoir.lightIndex;
+    pHat = luminance(evalDirectAnalytic(shadingData, materialInstance, false, sampleGenerator, lightIndex));
+    temporalReservoir.merge(previousReservoir, pHat, sampleNext1D(sampleGenerator));
+
+    lightIndex = temporalReservoir.lightIndex;
+    pHat = luminance(evalDirectAnalytic(shadingData, materialInstance, false, sampleGenerator, lightIndex));
+    temporalReservoir.finalize(pHat);
+
+    return temporalReservoir;
+}
+
+GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputReservoir, inout SampleGenerator sampleGenerator)
 {
     uint pixelIndex = getPixelIndex(pixel, frameDim);
     ShadingData inputShadingData;
@@ -155,14 +196,19 @@ void rayGen()
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
-    GIReservoir giInputReservoir = gInitialSamplesReservoir_GI[pixelIndex];
     SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
 
+    DIReservoir diInputReservoir = gInitialSamplesReservoir_DI[pixelIndex];
+    GIReservoir giInputReservoir = gInitialSamplesReservoir_GI[pixelIndex];
+
+    DIReservoir diOutputReservoir = diInputReservoir;
     GIReservoir giOutputReservoir = giInputReservoir;
     if (gEnableTemporal)
     {
+        diOutputReservoir = diTemporalResampling(pixel, frameDim, diInputReservoir, sampleGenerator);
         giOutputReservoir = giTemporalResampling(pixel, frameDim, giInputReservoir, sampleGenerator);
     }
 
+    gTemporalReservoirNew_DI[pixelIndex] = diOutputReservoir;
     gTemporalReservoirNew_GI[pixelIndex] = giOutputReservoir;
 }

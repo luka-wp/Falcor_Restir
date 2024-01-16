@@ -2,6 +2,10 @@
 #include "Utils/Math/MathConstants.slangh"
 #include "ReSTIRCommon.slangh"
 
+RWStructuredBuffer<DIReservoir> gSpatialReservoir_DI;
+RWStructuredBuffer<DIReservoir> gTemporalReservoirNew_DI;
+RWStructuredBuffer<DIReservoir> gTemporalReservoirOld_DI;
+
 RWStructuredBuffer<GIReservoir> gSpatialReservoir_GI;
 RWStructuredBuffer<GIReservoir> gTemporalReservoirNew_GI;
 RWStructuredBuffer<GIReservoir> gTemporalReservoirOld_GI;
@@ -15,50 +19,50 @@ cbuffer CB
     uint gFrameCount;
 }
 
-struct ShadowRayData
-{
-    bool visible;
-};
+// struct ShadowRayData
+// {
+//     bool visible;
+// };
 
-bool traceShadowRay(float3 origin, float3 dir, float distance)
-{
-    RayDesc ray;
-    ray.Origin = origin;
-    ray.Direction = dir;
-    ray.TMin = 0.f;
-    ray.TMax = distance;
+// bool traceShadowRay(float3 origin, float3 dir, float distance)
+// {
+//     RayDesc ray;
+//     ray.Origin = origin;
+//     ray.Direction = dir;
+//     ray.TMin = 0.f;
+//     ray.TMax = distance;
 
-    ShadowRayData rayData;
-    rayData.visible = false; // Set to true by miss shader if ray is not terminated before
-    TraceRay(
-        gScene.rtAccel,
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-        0xff /* instanceInclusionMask */,
-        0 /* hitIdx */,
-        rayTypeCount,
-        0 /* missIdx */,
-        ray,
-        rayData
-    );
+//     ShadowRayData rayData;
+//     rayData.visible = false; // Set to true by miss shader if ray is not terminated before
+//     TraceRay(
+//         gScene.rtAccel,
+//         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+//         0xff /* instanceInclusionMask */,
+//         0 /* hitIdx */,
+//         rayTypeCount,
+//         0 /* missIdx */,
+//         ray,
+//         rayData
+//     );
 
-    return rayData.visible;
-}
+//     return rayData.visible;
+// }
 
-[shader("miss")]
-void shadowMiss(inout ShadowRayData rayData)
-{
-    rayData.visible = true;
-}
+// [shader("miss")]
+// void shadowMiss(inout ShadowRayData rayData)
+// {
+//     rayData.visible = true;
+// }
 
-[shader("anyhit")]
-void shadowAnyHit(inout ShadowRayData rayData, BuiltInTriangleIntersectionAttributes attribs)
-{
-    GeometryInstanceID instanceID = getGeometryInstanceID();
-    VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
-    const uint materialID = gScene.getMaterialID(instanceID);
-    if (gScene.materials.alphaTest(v, materialID, 0.f))
-        IgnoreHit();
-}
+// [shader("anyhit")]
+// void shadowAnyHit(inout ShadowRayData rayData, BuiltInTriangleIntersectionAttributes attribs)
+// {
+//     GeometryInstanceID instanceID = getGeometryInstanceID();
+//     VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
+//     const uint materialID = gScene.getMaterialID(instanceID);
+//     if (gScene.materials.alphaTest(v, materialID, 0.f))
+//         IgnoreHit();
+// }
 
 [shader("raygeneration")]
 void rayGen()
@@ -74,7 +78,13 @@ void rayGen()
 
     float3 totalRadiance = float3(0.f);
 
-    totalRadiance += gDirectLightRadiance[pixel].xyz;
+    DIReservoir diSpatialReservoir = gSpatialReservoir_DI[pixelIndex];
+    int lightIndex = diSpatialReservoir.lightIndex;
+    float3 diColor = evalDirectAnalytic(shadingData, materialInstance, true, sampleGenerator, lightIndex);
+    float3 diRadiance = diColor * diSpatialReservoir.W;
+
+    totalRadiance += diRadiance;
+    // totalRadiance += gDirectLightRadiance[pixel].xyz;
 
     GIReservoir spatialReservoir = gSpatialReservoir_GI[pixelIndex];
     float3 woDelta = spatialReservoir.samplePoint - shadingData.posW;
@@ -89,8 +99,7 @@ void rayGen()
         totalRadiance += indirectRadiance;
     }
 
-
-    GIReservoir temporalOld = gTemporalReservoirOld_GI[pixelIndex];
+    gTemporalReservoirOld_DI[pixelIndex] = gTemporalReservoirNew_DI[pixelIndex];
     gTemporalReservoirOld_GI[pixelIndex] = gTemporalReservoirNew_GI[pixelIndex];
 
     gOutputColor[pixel] = float4(totalRadiance, 1.f);

@@ -98,12 +98,16 @@ private:
     ref<Texture> mpDirectLightRadiance;
 
     // >> Direct Illumination >> //
+    ref<Buffer> mpInitialSamplesReservoir_DI;
+    ref<Buffer> mpTemporalReservoirOld_DI;
+    ref<Buffer> mpTemporalReservoirNew_DI;
+    ref<Buffer> mpSpatialReservoir_DI;
     // << Direct Illumination << //
 
     // >> Global Illumination >> //
+    ref<Buffer> mpInitialSamplesReservoir_GI;
     ref<Buffer> mpTemporalReservoirOld_GI;
     ref<Buffer> mpTemporalReservoirNew_GI;
-    ref<Buffer> mpInitialSamplesReservoir_GI;
     ref<Buffer> mpSpatialReservoir_GI;
     // << Global Illumination << //
 

@@ -249,6 +249,7 @@ void RestirInitTemporal::executeInitSamples(RenderContext* pRenderContext, const
 
     bindChannels(kInputChannels, var, renderData);
 
+    var["gInitialSamplesReservoir_DI"] = mpInitialSamplesReservoir_DI;
     var["gInitialSamplesReservoir_GI"] = mpInitialSamplesReservoir_GI;
     var["gDirectLightRadiance"] = mpDirectLightRadiance;
 
@@ -299,6 +300,10 @@ void RestirInitTemporal::executeTemporal(RenderContext* pRenderContext, const Re
 
     bindChannels(kInputChannels, var, renderData);
 
+    var["gTemporalReservoirOld_DI"] = mpTemporalReservoirOld_DI;
+    var["gTemporalReservoirNew_DI"] = mpTemporalReservoirNew_DI;
+    var["gInitialSamplesReservoir_DI"] = mpInitialSamplesReservoir_DI;
+
     var["gTemporalReservoirOld_GI"] = mpTemporalReservoirOld_GI;
     var["gTemporalReservoirNew_GI"] = mpTemporalReservoirNew_GI;
     var["gInitialSamplesReservoir_GI"] = mpInitialSamplesReservoir_GI;
@@ -325,10 +330,12 @@ void RestirInitTemporal::prepareTemporalProgram()
         desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
         desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
 
-        mTracerTemporal.pBindingTable = RtBindingTable::create(0, 0, mpScene->getGeometryCount());
+        mTracerTemporal.pBindingTable = RtBindingTable::create(1, 1, mpScene->getGeometryCount());
 
         ref<RtBindingTable>& bindingTable = mTracerTemporal.pBindingTable;
         bindingTable->setRayGen(desc.addRayGen(kEntryRayGen));
+        bindingTable->setMiss(0, desc.addMiss(kEntryShadowMiss));
+        bindingTable->setHitGroup(0, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", kEntryShadowAnyHit));
 
         mTracerTemporal.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
     }
@@ -341,6 +348,9 @@ void RestirInitTemporal::executeSpatial(RenderContext* pRenderContext, const Ren
     var["CB"]["gEnableSpatial"] = mSpatialReuse;
 
     bindChannels(kInputChannels, var, renderData);
+
+    var["gTemporalReservoir_DI"] = mpTemporalReservoirNew_DI;
+    var["gSpatialReservoir_DI"] = mpSpatialReservoir_DI;
 
     var["gTemporalReservoir_GI"] = mpTemporalReservoirNew_GI;
     var["gSpatialReservoir_GI"] = mpSpatialReservoir_GI;
@@ -365,10 +375,12 @@ void RestirInitTemporal::prepareSpatialProgram()
         desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
         desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
 
-        mTracerSpatial.pBindingTable = RtBindingTable::create(0, 0, mpScene->getGeometryCount());
+        mTracerSpatial.pBindingTable = RtBindingTable::create(1, 1, mpScene->getGeometryCount());
 
         ref<RtBindingTable>& bindingTable = mTracerSpatial.pBindingTable;
         bindingTable->setRayGen(desc.addRayGen(kEntryRayGen));
+        bindingTable->setMiss(0, desc.addMiss(kEntryShadowMiss));
+        bindingTable->setHitGroup(0, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", kEntryShadowAnyHit));
 
         mTracerSpatial.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
     }
@@ -382,9 +394,14 @@ void RestirInitTemporal::executeFinalize(RenderContext* pRenderContext, const Re
     bindChannels(kInputChannels, var, renderData);
     bindChannels(kOutputChannels, var, renderData);
 
+    var["gTemporalReservoirOld_DI"] = mpTemporalReservoirOld_DI;
+    var["gTemporalReservoirNew_DI"] = mpTemporalReservoirNew_DI;
+    var["gSpatialReservoir_DI"] = mpSpatialReservoir_DI;
+
     var["gTemporalReservoirOld_GI"] = mpTemporalReservoirOld_GI;
     var["gTemporalReservoirNew_GI"] = mpTemporalReservoirNew_GI;
     var["gSpatialReservoir_GI"] = mpSpatialReservoir_GI;
+
     var["gDirectLightRadiance"] = mpDirectLightRadiance;
 
     uint2 targetDim = renderData.getDefaultTextureDims();
@@ -573,8 +590,19 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
     if (allocate)
     {
         const uint sampleCount = bufferX * bufferY;
+
+        // Initial samples
         {
             ShaderVar var = mTracerInit.pVars->getRootVar();
+            mpInitialSamplesReservoir_DI = mpDevice->createStructuredBuffer(
+                var["gInitialSamplesReservoir_DI"],
+                sampleCount,
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+                MemoryType::DeviceLocal,
+                nullptr,
+                false
+            );
+
             mpInitialSamplesReservoir_GI = mpDevice->createStructuredBuffer(
                 var["gInitialSamplesReservoir_GI"],
                 sampleCount,
@@ -584,9 +612,28 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
                 false
             );
         }
+
         // Temporal resources
         {
             ShaderVar var = mTracerTemporal.pVars->getRootVar();
+            mpTemporalReservoirOld_DI = mpDevice->createStructuredBuffer(
+                var["gTemporalReservoirOld_DI"],
+                sampleCount,
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+                MemoryType::DeviceLocal,
+                nullptr,
+                false
+            );
+
+            mpTemporalReservoirNew_DI = mpDevice->createStructuredBuffer(
+                var["gTemporalReservoirNew_DI"],
+                sampleCount,
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+                MemoryType::DeviceLocal,
+                nullptr,
+                false
+            );
+
             mpTemporalReservoirOld_GI = mpDevice->createStructuredBuffer(
                 var["gTemporalReservoirOld_GI"],
                 sampleCount,
@@ -609,6 +656,15 @@ void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
         // Spatial resources
         {
             ShaderVar var = mTracerSpatial.pVars->getRootVar();
+            mpSpatialReservoir_DI = mpDevice->createStructuredBuffer(
+                var["gSpatialReservoir_DI"],
+                sampleCount,
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+                MemoryType::DeviceLocal,
+                nullptr,
+                false
+            );
+
             mpSpatialReservoir_GI = mpDevice->createStructuredBuffer(
                 var["gSpatialReservoir_GI"],
                 sampleCount,
