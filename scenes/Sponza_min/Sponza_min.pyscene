@@ -1,0 +1,16 @@
+sceneBuilder.importScene('sponza.obj')
+
+camera = Camera()
+#camera.position = float3(60.0, 200.0, -50.0)
+camera.position = float3(0, 1.5, 0)
+camera.target = float3(1.0, 1.5, 0.0)
+camera.farPlane = 5000
+sceneBuilder.addCamera(camera)
+
+cameraSpeed = 30.0
+
+
+dirLight = DirectionalLight('Directional light')
+dirLight.intensity = float3(1.0, 0.77, 0.54) * 10.0
+dirLight.direction = float3(0, -1, 0)
+sceneBuilder.addLight(dirLight)

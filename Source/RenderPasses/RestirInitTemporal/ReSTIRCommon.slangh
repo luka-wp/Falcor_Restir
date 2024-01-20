@@ -17,29 +17,17 @@ import Utils.Color.ColorHelpers;
 struct DIReservoir
 {
     int lightIndex;
-    // uint lightData;
-    // uint uvData;
     float weightSum;
-    // float targetPdf;
     int M;
     float W;
-    // float3 packedVisibility;
-    // int2 spatialDistance;
-    // uint age;
 
     static DIReservoir makeEmpty()
     {
         DIReservoir reservoir;
         reservoir.lightIndex = -1;
-        // reservoir.lightData = 0;
-        // reservoir.uvData = 0;
         reservoir.weightSum = 0.f;
-        // reservoir.targetPdf = 0.f;
         reservoir.M = 0;
         reservoir.W = 0.f;
-        // reservoir.packedVisibility = float3(0.f, 0.f, 0.f);
-        // reservoir.spatialDistance = int2(0, 0);
-        // reservoir.age = 0;
         return reservoir;
     }
 
@@ -196,9 +184,11 @@ float getTargetPdfForSurface(ShadingData shadingData, IMaterialInstance material
     float NdotL = saturate(dot(L, shadingData.faceN));
     BSDFProperties bsdf = materialInstance.getProperties(shadingData);
     // float3 reflectedRadiance = sampleRadiance * bsdf.diffuseReflectionAlbedo * NdotL;
-    float3 reflectedRadiance = sampleRadiance * (bsdf.diffuseReflectionAlbedo + bsdf.specularReflectionAlbedo);
+    float3 reflectedRadiance = NdotL * sampleRadiance * (bsdf.diffuseReflectionAlbedo + bsdf.specularReflectionAlbedo);
     return luminance(reflectedRadiance);
     // return luminance(sampleRadiance);
+    // SampleGenerator dummySG = SampleGeneraotr(uint2(1, 1), 1337);
+    // return materialInstance.eval(shadingData, L)
 }
 
 void calculatePartialJacobian(

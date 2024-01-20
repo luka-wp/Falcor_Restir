@@ -61,80 +61,6 @@ ShadingData loadShadingData(const HitInfo hit, const float3 rayOrigin, const flo
     return sd;
 }
 
-// struct ShadowRayData
-// {
-//     bool visible;
-// };
-
-// bool traceShadowRay(float3 origin, float3 dir, float distance)
-// {
-//     RayDesc ray;
-//     ray.Origin = origin;
-//     ray.Direction = dir;
-//     ray.TMin = 0.f;
-//     ray.TMax = distance;
-
-//     ShadowRayData rayData;
-//     rayData.visible = false; // Set to true by miss shader if ray is not terminated before
-//     TraceRay(
-//         gScene.rtAccel,
-//         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-//         0xff /* instanceInclusionMask */,
-//         0 /* hitIdx */,
-//         rayTypeCount,
-//         0 /* missIdx */,
-//         ray,
-//         rayData
-//     );
-
-//     return rayData.visible;
-// }
-
-// float3 evalDirectAnalytic(
-//     const ShadingData sd,
-//     const IMaterialInstance mi,
-//     bool visibilityTest,
-//     inout SampleGenerator sg,
-//     inout int lightIdx
-// )
-// {
-//     const uint lightCount = gScene.getLightCount();
-//     if (lightCount == 0)
-//         return float3(0.f);
-
-//     // Pick one of the analytic light sources randomly with equal probability.
-//     const uint lightIndex = lightIdx != -1 ? lightIdx : min(uint(sampleNext1D(sg) * lightCount), lightCount - 1);
-//     float invPdf = lightCount; // Light selection pdf = 1.0 / lightCount.
-
-//     // Sample local light source.
-//     AnalyticLightSample ls;
-//     if (!sampleLight(sd.posW, gScene.getLight(lightIndex), sg, ls))
-//         return float3(0.f);
-
-//     // Reject sample if not in the hemisphere of a BSDF lobe.
-//     const uint lobeTypes = mi.getLobeTypes(sd);
-//     const bool hasReflection = lobeTypes & uint(LobeType::Reflection);
-//     const bool hasTransmission = lobeTypes & uint(LobeType::Transmission);
-//     float NdotL = dot(sd.getOrientedFaceNormal(), ls.dir);
-//     if ((NdotL <= kMinCosTheta && !hasTransmission) || (NdotL >= -kMinCosTheta && !hasReflection))
-//         return float3(0.f);
-
-//     // Get origin with offset applied in direction of the geometry normal to avoid self-intersection.
-//     const float3 origin = computeRayOrigin(sd.posW, dot(sd.faceN, ls.dir) >= 0.f ? sd.faceN : -sd.faceN);
-
-//     // Test visibility by tracing a shadow ray.
-//     if (visibilityTest)
-//     {
-//         bool V = traceShadowRay(origin, ls.dir, ls.distance);
-//         if (!V)
-//             return float3(0.f);
-//     }
-
-//     // Evaluate contribution.
-//     lightIdx = lightIndex;
-//     return mi.eval(sd, ls.dir, sg) * ls.Li * invPdf;
-// }
-
 bool generateScatterRay(const ShadingData sd, const IMaterialInstance mi, bool isCurveHit, float3 rayOrigin, inout ScatterRayData rayData)
 {
     BSDFSample bsdfSample;
@@ -177,7 +103,7 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
 
     int lightIndex = -1;
     float3 Lr = evalDirectAnalytic(sd, mi, true, rayData.sg, lightIndex);
-    rayData.radiance = rayData.thp * Lr;
+    rayData.radiance += rayData.thp * Lr;
 
     if (!generateScatterRay(sd, mi, false, rayOrigin, rayData))
     {
@@ -300,12 +226,6 @@ void indirectMiss(inout ScatterRayData rayData)
     }
 }
 
-// [shader("miss")]
-// void shadowMiss(inout ShadowRayData rayData)
-// {
-//     rayData.visible = true;
-// }
-
 [shader("anyhit")]
 void indirectAnyHit(inout ScatterRayData rayData, BuiltInTriangleIntersectionAttributes attribs)
 {
@@ -325,16 +245,6 @@ void indirectClosestHit(inout ScatterRayData rayData, BuiltInTriangleIntersectio
     triangleHit.barycentrics = attribs.barycentrics;
     handleHit(HitInfo(triangleHit), rayData);
 }
-
-// [shader("anyhit")]
-// void shadowAnyHit(inout ShadowRayData rayData, BuiltInTriangleIntersectionAttributes attribs)
-// {
-//     GeometryInstanceID instanceID = getGeometryInstanceID();
-//     VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
-//     const uint materialID = gScene.getMaterialID(instanceID);
-//     if (gScene.materials.alphaTest(v, materialID, 0.f))
-//         IgnoreHit();
-// }
 
 [shader("raygeneration")]
 void rayGen()

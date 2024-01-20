@@ -88,8 +88,9 @@ private:
 
     bool mInitLights = true;
     bool mTemporalReuse = true;
-    bool mIndirectLight = true;
     bool mSpatialReuse = true;
+    bool mDirectLight = true;
+    bool mIndirectLight = true;
     uint mFrameCount = 0;
 
     ref<Scene> mpScene;

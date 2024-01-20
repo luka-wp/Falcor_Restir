@@ -209,6 +209,8 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
 
 void RestirInitTemporal::renderUI(Gui::Widgets& widget)
 {
+    widget.checkbox("Direct Light", mDirectLight);
+    widget.checkbox("Indirect Light", mIndirectLight);
     widget.checkbox("Temporal Reuse", mTemporalReuse);
     widget.checkbox("Spatial Reuse", mSpatialReuse);
     //widget.checkbox("Indirect Light", mIndirectLight);
@@ -390,6 +392,8 @@ void RestirInitTemporal::executeFinalize(RenderContext* pRenderContext, const Re
 {
     ShaderVar var = mTracerFinalize.pVars->getRootVar();
     var["CB"]["gFrameCount"] = mFrameCount;
+    var["CB"]["gDirectLight"] = mDirectLight;
+    var["CB"]["gIndirectLight"] = mIndirectLight;
 
     bindChannels(kInputChannels, var, renderData);
     bindChannels(kOutputChannels, var, renderData);
