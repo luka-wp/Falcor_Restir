@@ -65,6 +65,7 @@ DIReservoir diTemporalResampling(uint2 pixel, uint2 frameDim, DIReservoir inputR
 
     lightIndex = previousReservoir.lightIndex;
     pHat = luminance(evalDirectAnalytic(shadingData, materialInstance, false, sampleGenerator, lightIndex));
+    temporalReservoir.M = min(temporalReservoir.M, 20 * inputReservoir.M);
     temporalReservoir.merge(previousReservoir, pHat, sampleNext1D(sampleGenerator));
 
     lightIndex = temporalReservoir.lightIndex;
@@ -83,38 +84,13 @@ GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputR
 
     int2 prevPos = pixel + int2(gMotionVector[pixel].xy * frameDim);
 
-    uint2 pixelPrev;
     GIReservoir temporalReservoir;
     bool foundTemporalReservoir = false;
 
-    const int temporalSampleStartIdx = int(sampleNext1D(sampleGenerator) * 8);
-    const int radius = 1;
-    const int temporalSampleCount = 5;
-    const int sampleCount = temporalSampleCount + 1;
-    for (int i = 0; i < sampleCount; ++i)
+    if (all(prevPos >= 0) && all(prevPos < frameDim))
     {
-        const bool isFirstSample = i == 0;
-        const bool isFallbackSample = i == temporalSampleCount;
-
-        int2 offset = int2(0, 0);
-        if (isFallbackSample)
-        {
-            prevPos = pixel;
-        }
-        else if (!isFirstSample)
-        {
-            offset = temporalResamplingOffset(temporalSampleStartIdx + i, radius);
-        }
-
-        int2 idx = prevPos + offset;
-
-        if (any(idx < 0) || any(idx >= frameDim))
-        {
-            continue;
-        }
-
-        uint idxIndex = getPixelIndex(idx, frameDim);
-        temporalReservoir = gTemporalReservoirOld_GI[idxIndex];
+        uint prevIdx = getPixelIndex(prevPos, frameDim);
+        temporalReservoir = gTemporalReservoirOld_GI[prevIdx];
 
         // Geometric similarity
         bool geometricSimilarity = validateGeometricSimilarity(
@@ -122,24 +98,12 @@ GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputR
             inputReservoir.visibleNormal,
             temporalReservoir.visiblePoint,
             temporalReservoir.visibleNormal,
-            gScene.camera.getViewProj()
+            gScene.camera.data.viewProjMatNoJitter,
+            false
         );
 
-        if (!isFallbackSample && !geometricSimilarity)
-        {
-            continue;
-        }
-
-        if (!temporalReservoir.isValid())
-        {
-            continue;
-        }
-
-        foundTemporalReservoir = true;
-        pixelPrev = idx;
-        break;
+        foundTemporalReservoir = geometricSimilarity && temporalReservoir.isValid();
     }
-
     GIReservoir curReservoir = GIReservoir::makeEmpty();
 
     float selectedTargetPdf = 0;
@@ -152,20 +116,7 @@ GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputR
 
     if (foundTemporalReservoir)
     {
-        // float jacobian = calculateJacobian(inputReservoir.visiblePoint, temporalReservoir.visiblePoint, temporalReservoir);
-        // if (!validateSampleWithJacobian(jacobian))
-        // {
-        //     foundTemporalReservoir = false;
-        // }
-
-        // temporalReservoir.weightSum *= jacobian;
         temporalReservoir.M = min(temporalReservoir.M, kMaxM);
-        ++temporalReservoir.age;
-
-        if (temporalReservoir.age > kMaxAge)
-        {
-            foundTemporalReservoir = false;
-        }
     }
 
     bool selectedPreviousSample = false;
@@ -173,7 +124,7 @@ GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputR
     {
         ShadingData shadingData;
         IMaterialInstance materialInstance;
-        getShadingDataAndMaterial(shadingData, materialInstance, pixelPrev, frameDim);
+        getShadingDataAndMaterial(shadingData, materialInstance, prevPos, frameDim);
         float targetPdf =
             getTargetPdfForSurface(shadingData, inputMaterialInstance, temporalReservoir.samplePoint, temporalReservoir.sampleRadiance);
         selectedPreviousSample = curReservoir.merge(temporalReservoir, targetPdf, sampleNext1D(sampleGenerator));

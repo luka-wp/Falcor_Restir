@@ -6,6 +6,8 @@ static const uint kMaxBounces = 2;
 static const bool kUseEmissiveLights = false;
 static const bool kUseEnvLight = false;
 
+static const uint kSampleCount = 32;
+
 RWStructuredBuffer<DIReservoir> gInitialSamplesReservoir_DI;
 RWStructuredBuffer<GIReservoir> gInitialSamplesReservoir_GI;
 RWTexture2D<float4> gDirectLightRadiance;
@@ -64,7 +66,7 @@ ShadingData loadShadingData(const HitInfo hit, const float3 rayOrigin, const flo
 bool generateScatterRay(const ShadingData sd, const IMaterialInstance mi, bool isCurveHit, float3 rayOrigin, inout ScatterRayData rayData)
 {
     BSDFSample bsdfSample;
-    if (mi.sample(sd, rayData.sg, bsdfSample, false))
+    if (mi.sample(sd, rayData.sg, bsdfSample, true))
     {
         rayData.origin = rayOrigin;
         if (bsdfSample.isLobe(LobeType::Transmission))
@@ -166,8 +168,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim, out DIReservoir outDIR
             }
             // Direct
             float pHat = 0.f;
-            const int kMaxDILightSamples = 8;
-            for (int i = 0; i < min(gScene.lightCount, kMaxDILightSamples); ++i)
+            for (int i = 0; i < min(gScene.lightCount, kSampleCount); ++i)
             {
                 int lightIndex = -1;
                 float3 lightRadiance = evalDirectAnalytic(sd, mi, false, sg, lightIndex);
@@ -192,7 +193,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim, out DIReservoir outDIR
 
         float3 visibleSurfacePosition = sd.posW;
         float3 visibleSurfaceNormal = sd.faceN;
-        float3 secondarySurfacePosition = float3(0.f);
+        float3 secondarySurfacePosition = float3(0);
         float3 secondarySurfaceNormal = float3(0.f);
         for (uint depth = 0; depth <= kMaxBounces && !rayData.terminated; depth++)
         {
@@ -211,7 +212,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim, out DIReservoir outDIR
                 secondarySurfacePosition,
                 secondarySurfaceNormal,
                 rayData.radiance,
-                rayData.pdf
+                1.f
             );
         }
     }

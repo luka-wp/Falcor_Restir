@@ -2,6 +2,9 @@
 #include "Utils/Math/MathConstants.slangh"
 #include "ReSTIRCommon.slangh"
 
+static const int kNeighborSamples = 5;
+static const int kNeighborRadius = 30;
+
 RWStructuredBuffer<DIReservoir> gTemporalReservoir_DI;
 RWStructuredBuffer<DIReservoir> gSpatialReservoir_DI;
 
@@ -16,20 +19,12 @@ cbuffer CB
     bool gEnableSpatial;
 }
 
-int2 calculateSpatialResamplingOffset(int sampleIdx, float radius)
+int2 calcNeighborPixel(uint2 pixel, uint2 frameDim, int radius, inout SampleGenerator sampleGenerator)
 {
-    sampleIdx &= 7;
-    int2 offsets[8] = {
-        int2(-1, -1),
-        int2(0, -1),
-        int2(1, -1),
-        int2(-1, 0),
-        int2(1, 0),
-        int2(-1, 1),
-        int2(0, 1),
-        int2(1, 1)
-    };
-    return int2(float2(offsets[sampleIdx]) * radius);
+    float2 alpha = float2(-1.f) + float2(2.f) * sampleNext2D(sampleGenerator);
+    int2 offset = int2(alpha * radius);
+    int2 neighbor = pixel + offset;
+    return clamp(neighbor, int2(0), frameDim - 1);
 }
 
 DIReservoir diSpatialResampling(uint2 pixel, uint2 frameDim, DIReservoir inputReservoir, SampleGenerator sampleGenerator)
@@ -48,11 +43,11 @@ DIReservoir diSpatialResampling(uint2 pixel, uint2 frameDim, DIReservoir inputRe
     spatialReservoir.merge(inputReservoir, pHat, sampleNext1D(sampleGenerator));
 
     const int baseIndex = sampleNext1D(sampleGenerator) * 8;
-    const uint kNeighborCount = 4;
-    for (int i = 0; i < kNeighborCount; ++i)
+    for (int i = 0; i < kNeighborSamples; ++i)
     {
-        int2 offset = calculateSpatialResamplingOffset(baseIndex + i + 3, 1);
-        uint2 nbPixel = clamp(pixel + offset, uint2(0), frameDim - 1);
+        // int2 offset = calculateSpatialResamplingOffset(baseIndex + i + 3, 1);
+        // uint2 nbPixel = clamp(pixel + offset, uint2(0), frameDim - 1);
+        uint2 nbPixel = calcNeighborPixel(pixel, frameDim, kNeighborRadius, sampleGenerator);
         uint nbPixelIndex = getPixelIndex(nbPixel, frameDim);
 
         DIReservoir nbReservoir = gTemporalReservoir_DI[nbPixelIndex];
@@ -77,7 +72,6 @@ GIReservoir giSpatialResampling(uint2 pixel, uint2 frameDim, GIReservoir inputRe
     getShadingDataAndMaterial(inputShadingData, inputMaterialInstance, pixel, frameDim);
 
     const uint numSamples = 15;
-    const uint neighborSpan = 4;
 
     GIReservoir curReservoir = GIReservoir::makeEmpty();
 
@@ -90,15 +84,11 @@ GIReservoir giSpatialResampling(uint2 pixel, uint2 frameDim, GIReservoir inputRe
         curReservoir.merge(inputReservoir, selectedTargetPdf, 0.5f);
     }
 
-    uint cachedResult = 0;
-    int selected = -1;
-
     const int neighborSampleStartIdx = int(sampleNext1D(sampleGenerator) * 8);
     const float radius = 1.f;
-    for (int i = 0; i < numSamples; ++i)
+    for (int i = 0; i < kNeighborSamples; ++i)
     {
-        int2 idx = pixel + calculateSpatialResamplingOffset(neighborSampleStartIdx + i, radius);
-        idx = clamp(idx, int2(0), frameDim - 1);
+        int2 idx = calcNeighborPixel(pixel, frameDim, kNeighborRadius, sampleGenerator);
 
         uint idxIndex = getPixelIndex(idx, frameDim);
         GIReservoir neighborReservoir = gTemporalReservoir_GI[idxIndex];
@@ -108,8 +98,10 @@ GIReservoir giSpatialResampling(uint2 pixel, uint2 frameDim, GIReservoir inputRe
             inputReservoir.visibleNormal,
             neighborReservoir.visiblePoint,
             neighborReservoir.visibleNormal,
-            gScene.camera.getViewProj()
+            gScene.camera.data.viewProjMatNoJitter,
+            true
         );
+
         if (!geometricSimilarity)
         {
             continue;
@@ -128,12 +120,9 @@ GIReservoir giSpatialResampling(uint2 pixel, uint2 frameDim, GIReservoir inputRe
             continue;
         }
 
-        cachedResult |= (1u << uint(i));
-
         bool isUpdated = curReservoir.merge(neighborReservoir, targetPdf * jacobian, sampleNext1D(sampleGenerator));
         if (isUpdated)
         {
-            selected = i;
             selectedTargetPdf = targetPdf;
         }
     }

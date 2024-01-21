@@ -45,23 +45,12 @@ void rayGen()
         
         totalRadiance += diRadiance;
     }
-    // totalRadiance += gDirectLightRadiance[pixel].xyz;
 
     if (gIndirectLight)
     {
         GIReservoir spatialReservoir = gSpatialReservoir_GI[pixelIndex];
-        float3 woDelta = spatialReservoir.samplePoint - shadingData.posW;
-        float woDist = length(woDelta);
-        float3 wo = woDelta / woDist;
-        float3 origin = shadingData.computeRayOrigin(true);
-        bool indirectVisible = traceShadowRay(origin, wo, woDist);
-        if (indirectVisible)
-        {
-            float3 surfaceColor = materialInstance.eval(shadingData, wo, sampleGenerator);
-            float3 indirectRadiance = surfaceColor * spatialReservoir.sampleRadiance * spatialReservoir.weightSum;
-            
-            totalRadiance += indirectRadiance;
-        }
+        float3 indirectRadiance = spatialReservoir.sampleRadiance * spatialReservoir.weightSum;
+        totalRadiance += indirectRadiance;
     }
 
     if (!gClearBuffers)

@@ -75,7 +75,6 @@ struct GIReservoir
 
     float weightSum;
     uint M;
-    uint age;
 
     static GIReservoir makeReservoir(
         float3 inVisiblePoint,
@@ -94,7 +93,6 @@ struct GIReservoir
         reservoir.sampleRadiance = inSampleRadiance;
         reservoir.weightSum = inSamplePdf > 0.f ? 1.f / inSamplePdf : 0.f;
         reservoir.M = 1;
-        reservoir.age = 0;
         return reservoir;
     }
 
@@ -108,7 +106,6 @@ struct GIReservoir
         reservoir.sampleRadiance = float3(0.f);
         reservoir.weightSum = 0.f;
         reservoir.M = 0;
-        reservoir.age = 0;
         return reservoir;
     }
 
@@ -126,7 +123,6 @@ struct GIReservoir
             samplePoint = reservoir.samplePoint;
             sampleNormal = reservoir.sampleNormal;
             sampleRadiance = reservoir.sampleRadiance;
-            age = reservoir.age;
         }
 
         return selectSample;
@@ -234,9 +230,9 @@ bool validateSampleWithJacobian(inout float jacobian)
     return true;
 }
 
-bool validateGeometricSimilarity(float3 positionA, float3 normalA, float3 positionB, float3 normalB, float4x4 viewProj)
+bool validateGeometricSimilarity(float3 positionA, float3 normalA, float3 positionB, float3 normalB, float4x4 viewProj, bool testDepth)
 {
-    const float NdotN = dot(normalA, normalB);
+    const float NdotN = dot(normalize(normalA), normalize(normalB));
     if (NdotN < 0.f)
     {
         return false;
@@ -246,13 +242,18 @@ bool validateGeometricSimilarity(float3 positionA, float3 normalA, float3 positi
     {
         return false;
     }
-    float4 a = mul(viewProj, float4(positionA, 1.f));
-    float4 b = mul(viewProj, float4(positionB, 1.f));
-    a.xyz /= a.w;
-    b.xyz /= b.w;
-    if (abs(a.z - b.z) > 0.05f)
+
+    if (testDepth)
     {
-        return false;
+        float4 a = mul(viewProj, float4(positionA, 1.f));
+        float4 b = mul(viewProj, float4(positionB, 1.f));
+        a.xyz /= a.w;
+        b.xyz /= b.w;
+
+        if (abs(a.z - b.z) > (0.05f))
+        {
+            return false;
+        }
     }
 
     return true;
