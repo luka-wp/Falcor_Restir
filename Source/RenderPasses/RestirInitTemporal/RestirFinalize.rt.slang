@@ -19,6 +19,7 @@ cbuffer CB
     uint gFrameCount;
     bool gDirectLight;
     bool gIndirectLight;
+    bool gClearBuffers;
 }
 
 [shader("raygeneration")]
@@ -52,7 +53,8 @@ void rayGen()
         float3 woDelta = spatialReservoir.samplePoint - shadingData.posW;
         float woDist = length(woDelta);
         float3 wo = woDelta / woDist;
-        bool indirectVisible = traceShadowRay(shadingData.posW, wo, woDist);
+        float3 origin = shadingData.computeRayOrigin(true);
+        bool indirectVisible = traceShadowRay(origin, wo, woDist);
         if (indirectVisible)
         {
             float3 surfaceColor = materialInstance.eval(shadingData, wo, sampleGenerator);
@@ -61,9 +63,17 @@ void rayGen()
             totalRadiance += indirectRadiance;
         }
     }
-            
-    gTemporalReservoirOld_DI[pixelIndex] = gTemporalReservoirNew_DI[pixelIndex];
-    gTemporalReservoirOld_GI[pixelIndex] = gTemporalReservoirNew_GI[pixelIndex];
+
+    if (!gClearBuffers)
+    {
+        gTemporalReservoirOld_DI[pixelIndex] = gTemporalReservoirNew_DI[pixelIndex];
+        gTemporalReservoirOld_GI[pixelIndex] = gTemporalReservoirNew_GI[pixelIndex];
+    }
+    else
+    {
+        gTemporalReservoirOld_DI[pixelIndex] = DIReservoir::makeEmpty();
+        gTemporalReservoirOld_GI[pixelIndex] = GIReservoir::makeEmpty();
+    }
 
     gOutputColor[pixel] = float4(totalRadiance, 1.f);
 }

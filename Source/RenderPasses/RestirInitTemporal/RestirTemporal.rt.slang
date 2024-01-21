@@ -23,7 +23,7 @@ cbuffer CB
 }
 
 static const uint kMaxM = 30;
-static const uint kMaxAge = 100;
+static const uint kMaxAge = 50;
 
 int2 temporalResamplingOffset(int sampleIdx, int radius)
 {
@@ -152,13 +152,13 @@ GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputR
 
     if (foundTemporalReservoir)
     {
-        float jacobian = calculateJacobian(inputReservoir.visiblePoint, temporalReservoir.visiblePoint, temporalReservoir);
-        if (!validateSampleWithJacobian(jacobian))
-        {
-            foundTemporalReservoir = false;
-        }
+        // float jacobian = calculateJacobian(inputReservoir.visiblePoint, temporalReservoir.visiblePoint, temporalReservoir);
+        // if (!validateSampleWithJacobian(jacobian))
+        // {
+        //     foundTemporalReservoir = false;
+        // }
 
-        temporalReservoir.weightSum *= jacobian;
+        // temporalReservoir.weightSum *= jacobian;
         temporalReservoir.M = min(temporalReservoir.M, kMaxM);
         ++temporalReservoir.age;
 

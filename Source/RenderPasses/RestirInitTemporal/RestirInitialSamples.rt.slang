@@ -64,7 +64,7 @@ ShadingData loadShadingData(const HitInfo hit, const float3 rayOrigin, const flo
 bool generateScatterRay(const ShadingData sd, const IMaterialInstance mi, bool isCurveHit, float3 rayOrigin, inout ScatterRayData rayData)
 {
     BSDFSample bsdfSample;
-    if (mi.sample(sd, rayData.sg, bsdfSample, true))
+    if (mi.sample(sd, rayData.sg, bsdfSample, false))
     {
         rayData.origin = rayOrigin;
         if (bsdfSample.isLobe(LobeType::Transmission))
@@ -75,6 +75,7 @@ bool generateScatterRay(const ShadingData sd, const IMaterialInstance mi, bool i
         rayData.direction = bsdfSample.wo;
         rayData.thp *= bsdfSample.weight;
         rayData.pdf = bsdfSample.pdf;
+        
         return any(rayData.thp > 0.f);
     }
     return false;
@@ -203,9 +204,16 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim, out DIReservoir outDIR
             }
         }
 
-        giReservoir = GIReservoir::makeReservoir(
-            visibleSurfacePosition, visibleSurfaceNormal, secondarySurfacePosition, secondarySurfaceNormal, rayData.radiance, rayData.pdf
-        );
+        {
+            giReservoir = GIReservoir::makeReservoir(
+                visibleSurfacePosition,
+                visibleSurfaceNormal,
+                secondarySurfacePosition,
+                secondarySurfaceNormal,
+                rayData.radiance,
+                rayData.pdf
+            );
+        }
     }
 
     outDIReservoir = diReservoir;

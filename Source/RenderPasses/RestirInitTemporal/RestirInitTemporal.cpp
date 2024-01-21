@@ -193,6 +193,11 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
     const uint2 dims = renderData.getDefaultTextureDims();
     allocateReservoir(dims.x, dims.y);
 
+    if (mClearBuffers)
+    {
+        
+    }
+
     executeInitSamples(pRenderContext, renderData);
     executeTemporal(pRenderContext, renderData);
     executeSpatial(pRenderContext, renderData);
@@ -213,7 +218,14 @@ void RestirInitTemporal::renderUI(Gui::Widgets& widget)
     widget.checkbox("Indirect Light", mIndirectLight);
     widget.checkbox("Temporal Reuse", mTemporalReuse);
     widget.checkbox("Spatial Reuse", mSpatialReuse);
-    //widget.checkbox("Indirect Light", mIndirectLight);
+
+    if(widget.button("Clear Buffers"))
+    {
+        if (!mClearBuffers)
+        {
+            mClearBuffers = true;
+        }
+    }
 }
 
 void RestirInitTemporal::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
@@ -394,6 +406,9 @@ void RestirInitTemporal::executeFinalize(RenderContext* pRenderContext, const Re
     var["CB"]["gFrameCount"] = mFrameCount;
     var["CB"]["gDirectLight"] = mDirectLight;
     var["CB"]["gIndirectLight"] = mIndirectLight;
+
+    var["CB"]["gClearBuffers"] = mClearBuffers;
+    mClearBuffers = false;
 
     bindChannels(kInputChannels, var, renderData);
     bindChannels(kOutputChannels, var, renderData);

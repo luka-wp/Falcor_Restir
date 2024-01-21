@@ -86,6 +86,8 @@ private:
     void allocateReservoir(uint bufferX, uint bufferY);
     void prepareVars();
 
+    bool mClearBuffers = false;
+
     bool mInitLights = true;
     bool mTemporalReuse = true;
     bool mSpatialReuse = true;
