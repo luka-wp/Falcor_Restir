@@ -3,16 +3,14 @@
 #include "ReSTIRCommon.slangh"
 
 RWStructuredBuffer<DIReservoir> gSpatialReservoir_DI;
-RWStructuredBuffer<DIReservoir> gTemporalReservoirNew_DI;
-RWStructuredBuffer<DIReservoir> gTemporalReservoirOld_DI;
+RWStructuredBuffer<DIReservoir> gTemporalReservoir_DI;
 
 RWStructuredBuffer<GIReservoir> gSpatialReservoir_GI;
-RWStructuredBuffer<GIReservoir> gTemporalReservoirNew_GI;
-RWStructuredBuffer<GIReservoir> gTemporalReservoirOld_GI;
+RWStructuredBuffer<GIReservoir> gTemporalReservoir_GI;
 
-Texture2D<float4> gDirectLightRadiance;
+// Texture2D<float4> gDirectLightRadiance;
 
-RWTexture2D<float4> gOutputColor;
+// RWTexture2D<float4> gOutputColor;
 
 cbuffer CB
 {
@@ -29,40 +27,52 @@ void rayGen()
     uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
 
-    ShadingData shadingData;
-    IMaterialInstance materialInstance;
-    getShadingDataAndMaterial(shadingData, materialInstance, pixel, frameDim);
-    SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
-
-    float3 totalRadiance = float3(0.f);
-
-    if (gDirectLight)
-    {
-        DIReservoir diSpatialReservoir = gSpatialReservoir_DI[pixelIndex];
-        int lightIndex = diSpatialReservoir.lightIndex;
-        float3 diColor = evalDirectAnalytic(shadingData, materialInstance, true, sampleGenerator, lightIndex);
-        float3 diRadiance = diColor * diSpatialReservoir.W;
-        
-        totalRadiance += diRadiance;
-    }
-
-    if (gIndirectLight)
-    {
-        GIReservoir spatialReservoir = gSpatialReservoir_GI[pixelIndex];
-        float3 indirectRadiance = spatialReservoir.sampleRadiance * spatialReservoir.weightSum;
-        totalRadiance += indirectRadiance;
-    }
-
+    // Save prev reservoirs to temporal buffer
     if (!gClearBuffers)
     {
-        gTemporalReservoirOld_DI[pixelIndex] = gTemporalReservoirNew_DI[pixelIndex];
-        gTemporalReservoirOld_GI[pixelIndex] = gTemporalReservoirNew_GI[pixelIndex];
+        gTemporalReservoir_DI[pixelIndex] = gSpatialReservoir_DI[pixelIndex];
+        gTemporalReservoir_GI[pixelIndex] = gSpatialReservoir_GI[pixelIndex];
     }
     else
     {
-        gTemporalReservoirOld_DI[pixelIndex] = DIReservoir::makeEmpty();
-        gTemporalReservoirOld_GI[pixelIndex] = GIReservoir::makeEmpty();
+        gTemporalReservoir_DI[pixelIndex] = DIReservoir::makeEmpty();
+        gTemporalReservoir_GI[pixelIndex] = GIReservoir::makeEmpty();
     }
 
-    gOutputColor[pixel] = float4(totalRadiance, 1.f);
+    // ShadingData shadingData;
+    // IMaterialInstance materialInstance;
+    // getShadingDataAndMaterial(shadingData, materialInstance, pixel, frameDim);
+    // SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
+
+    // float3 totalRadiance = float3(0.f);
+
+    // if (gDirectLight)
+    // {
+    //     DIReservoir diSpatialReservoir = gSpatialReservoir_DI[pixelIndex];
+    //     int lightIndex = diSpatialReservoir.lightIndex;
+    //     float3 diColor = evalDirectAnalytic(shadingData, materialInstance, true, sampleGenerator, lightIndex);
+    //     float3 diRadiance = diColor * diSpatialReservoir.W;
+        
+    //     totalRadiance += diRadiance;
+    // }
+
+    // if (gIndirectLight)
+    // {
+    //     GIReservoir spatialReservoir = gSpatialReservoir_GI[pixelIndex];
+    //     float3 indirectRadiance = spatialReservoir.sampleRadiance * spatialReservoir.weightSum;
+    //     totalRadiance += indirectRadiance;
+    // }
+
+    // if (!gClearBuffers)
+    // {
+    //     gTemporalReservoirOld_DI[pixelIndex] = gTemporalReservoirNew_DI[pixelIndex];
+    //     gTemporalReservoirOld_GI[pixelIndex] = gTemporalReservoirNew_GI[pixelIndex];
+    // }
+    // else
+    // {
+    //     gTemporalReservoirOld_DI[pixelIndex] = DIReservoir::makeEmpty();
+    //     gTemporalReservoirOld_GI[pixelIndex] = GIReservoir::makeEmpty();
+    // }
+
+    // gOutputColor[pixel] = float4(totalRadiance, 1.f);
 }

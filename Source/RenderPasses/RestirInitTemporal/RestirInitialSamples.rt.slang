@@ -21,6 +21,7 @@ cbuffer CB
     uint gFrameCount;
     bool gInitialSamples;
     bool gEnableTemporal;
+    bool gClearBuffers;
 }
 
 struct ScatterRayData
@@ -384,7 +385,7 @@ void rayGen()
     GIReservoir giReservoir;
     float3 diRadiance = tracePath(pixel, frameDim, diReservoir, giReservoir, sampleGenerator);
 
-    if (gEnableTemporal)
+    if (!gInitialSamples && gEnableTemporal)
     {
         gSpatialReservoir_DI[pixelIndex] = diTemporalResampling(pixel, frameDim, diReservoir, sampleGenerator);
         gSpatialReservoir_GI[pixelIndex] = giTemporalResampling(pixel, frameDim, giReservoir, sampleGenerator);
