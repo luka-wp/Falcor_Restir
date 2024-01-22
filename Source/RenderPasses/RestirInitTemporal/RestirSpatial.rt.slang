@@ -5,11 +5,11 @@
 static const int kNeighborSamples = 5;
 static const int kNeighborRadius = 30;
 
-RWStructuredBuffer<DIReservoir> gTemporalReservoir_DI;
 RWStructuredBuffer<DIReservoir> gSpatialReservoir_DI;
+RWStructuredBuffer<DIReservoir> gTemporalReservoir_DI;
 
-RWStructuredBuffer<GIReservoir> gTemporalReservoir_GI;
 RWStructuredBuffer<GIReservoir> gSpatialReservoir_GI;
+RWStructuredBuffer<GIReservoir> gTemporalReservoir_GI;
 
 RWTexture2D<float4> gOutputColor;
 
@@ -17,6 +17,9 @@ cbuffer CB
 {
     uint gFrameCount;
     bool gEnableSpatial;
+    bool gDirectLight;
+    bool gIndirectLight;
+    bool gClearBuffers;
 }
 
 int2 calcNeighborPixel(uint2 pixel, uint2 frameDim, int radius, inout SampleGenerator sampleGenerator)
@@ -45,12 +48,10 @@ DIReservoir diSpatialResampling(uint2 pixel, uint2 frameDim, DIReservoir inputRe
     const int baseIndex = sampleNext1D(sampleGenerator) * 8;
     for (int i = 0; i < kNeighborSamples; ++i)
     {
-        // int2 offset = calculateSpatialResamplingOffset(baseIndex + i + 3, 1);
-        // uint2 nbPixel = clamp(pixel + offset, uint2(0), frameDim - 1);
         uint2 nbPixel = calcNeighborPixel(pixel, frameDim, kNeighborRadius, sampleGenerator);
         uint nbPixelIndex = getPixelIndex(nbPixel, frameDim);
 
-        DIReservoir nbReservoir = gTemporalReservoir_DI[nbPixelIndex];
+        DIReservoir nbReservoir = gSpatialReservoir_DI[nbPixelIndex];
 
         lightIndex = nbReservoir.lightIndex;
         pHat = luminance(evalDirectAnalytic(shadingData, materialInstance, false, sampleGenerator, lightIndex));
@@ -91,7 +92,7 @@ GIReservoir giSpatialResampling(uint2 pixel, uint2 frameDim, GIReservoir inputRe
         int2 idx = calcNeighborPixel(pixel, frameDim, kNeighborRadius, sampleGenerator);
 
         uint idxIndex = getPixelIndex(idx, frameDim);
-        GIReservoir neighborReservoir = gTemporalReservoir_GI[idxIndex];
+        GIReservoir neighborReservoir = gSpatialReservoir_GI[idxIndex];
 
         bool geometricSimilarity = validateGeometricSimilarity(
             inputReservoir.visiblePoint,
@@ -140,12 +141,15 @@ void rayGen()
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
-
-    DIReservoir diInputReservoir = gTemporalReservoir_DI[pixelIndex];
-    GIReservoir giInputReservoir = gTemporalReservoir_GI[pixelIndex];
-    
     SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
+    ShadingData shadingData;
+    IMaterialInstance materialInstance;
+    getShadingDataAndMaterial(shadingData, materialInstance, pixel, frameDim);
 
+    DIReservoir diInputReservoir = gSpatialReservoir_DI[pixelIndex];
+    GIReservoir giInputReservoir = gSpatialReservoir_GI[pixelIndex];
+    
+    // Spatial resampling
     DIReservoir diOutputReservoir = diInputReservoir;
     GIReservoir giOutputReservoir = giInputReservoir;
     if (gEnableSpatial)
@@ -154,6 +158,35 @@ void rayGen()
         giOutputReservoir = giSpatialResampling(pixel, frameDim, giInputReservoir, sampleGenerator);
     }
 
-    gSpatialReservoir_DI[pixelIndex] = diOutputReservoir;
-    gSpatialReservoir_GI[pixelIndex] = giOutputReservoir;
+    // Save prev reservoirs to temporal buffer
+    if (!gClearBuffers)
+    {
+        gTemporalReservoir_DI[pixelIndex] = diInputReservoir;
+        gTemporalReservoir_GI[pixelIndex] = giInputReservoir;
+    }
+    else
+    {
+        gTemporalReservoir_DI[pixelIndex] = DIReservoir::makeEmpty();
+        gTemporalReservoir_GI[pixelIndex] = GIReservoir::makeEmpty();
+    }
+
+    // Final shading
+    float3 totalRadiance = float3(0.f);
+    if (gDirectLight)
+    {
+        int lightIndex = diOutputReservoir.lightIndex;
+        float3 diColor = evalDirectAnalytic(shadingData, materialInstance, true, sampleGenerator, lightIndex);
+        float3 diRadiance = diColor * diOutputReservoir.W;
+
+        totalRadiance += diRadiance;
+    }
+
+    if (gIndirectLight)
+    {
+        float3 indirectRadiance = giOutputReservoir.sampleRadiance * giOutputReservoir.weightSum;
+        totalRadiance += indirectRadiance;
+    }
+
+    gOutputColor[pixel] = float4(totalRadiance, 1.f);
+
 }

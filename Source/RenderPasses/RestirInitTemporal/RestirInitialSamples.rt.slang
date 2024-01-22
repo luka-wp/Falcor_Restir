@@ -8,13 +8,19 @@ static const bool kUseEnvLight = false;
 
 static const uint kSampleCount = 32;
 
-RWStructuredBuffer<DIReservoir> gInitialSamplesReservoir_DI;
-RWStructuredBuffer<GIReservoir> gInitialSamplesReservoir_GI;
-RWTexture2D<float4> gDirectLightRadiance;
+RWStructuredBuffer<DIReservoir> gTemporalReservoir_DI;
+RWStructuredBuffer<DIReservoir> gSpatialReservoir_DI;
+
+RWStructuredBuffer<GIReservoir> gTemporalReservoir_GI;
+RWStructuredBuffer<GIReservoir> gSpatialReservoir_GI;
+
+Texture2D<float4> gMotionVector;
 
 cbuffer CB
 {
     uint gFrameCount;
+    bool gInitialSamples;
+    bool gEnableTemporal;
 }
 
 struct ScatterRayData
@@ -77,7 +83,7 @@ bool generateScatterRay(const ShadingData sd, const IMaterialInstance mi, bool i
         rayData.direction = bsdfSample.wo;
         rayData.thp *= bsdfSample.weight;
         rayData.pdf = bsdfSample.pdf;
-        
+
         return any(rayData.thp > 0.f);
     }
     return false;
@@ -139,7 +145,13 @@ void traceScatterRay(inout ScatterRayData rayData)
     TraceRay(gScene.rtAccel, rayFlags, 0xff, 1, rayTypeCount, 1, ray, rayData);
 }
 
-float3 tracePath(const uint2 pixel, const uint2 frameDim, out DIReservoir outDIReservoir, out GIReservoir outGIReservoir)
+float3 tracePath(
+    const uint2 pixel,
+    const uint2 frameDim,
+    out DIReservoir outDIReservoir,
+    out GIReservoir outGIReservoir,
+    inout SampleGenerator sg
+)
 {
     DIReservoir diReservoir = DIReservoir::makeEmpty();
     GIReservoir giReservoir = GIReservoir::makeEmpty();
@@ -151,7 +163,6 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim, out DIReservoir outDIR
     const HitInfo hit = HitInfo(gVBuffer[pixel]);
     if (hit.isValid())
     {
-        SampleGenerator sg = SampleGenerator(pixel, gFrameCount);
         let lod = ExplicitLodTextureSampler(0.f);
         ShadingData sd = loadShadingData(hit, primaryRayOrigin, primaryRayDir, lod);
         let mi = gScene.materials.getMaterialInstance(sd, lod);
@@ -207,12 +218,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim, out DIReservoir outDIR
 
         {
             giReservoir = GIReservoir::makeReservoir(
-                visibleSurfacePosition,
-                visibleSurfaceNormal,
-                secondarySurfacePosition,
-                secondarySurfaceNormal,
-                rayData.radiance,
-                1.f
+                visibleSurfacePosition, visibleSurfaceNormal, secondarySurfacePosition, secondarySurfaceNormal, rayData.radiance, 1.f
             );
         }
     }
@@ -255,6 +261,116 @@ void indirectClosestHit(inout ScatterRayData rayData, BuiltInTriangleIntersectio
     handleHit(HitInfo(triangleHit), rayData);
 }
 
+// ReSTIR functions //
+
+static const uint kMaxM = 30;
+static const uint kMaxAge = 50;
+
+DIReservoir diTemporalResampling(uint2 pixel, uint2 frameDim, DIReservoir inputReservoir, inout SampleGenerator sampleGenerator)
+{
+    uint pixelIndex = getPixelIndex(pixel, frameDim);
+    int2 prevPos = pixel + int2(gMotionVector[pixel].xy * frameDim);
+    ShadingData shadingData;
+    IMaterialInstance materialInstance;
+    getShadingDataAndMaterial(shadingData, materialInstance, pixel, frameDim);
+
+    if (any(prevPos < 0) || any(prevPos >= frameDim) || gInitialSamples)
+    {
+        return inputReservoir;
+    }
+
+    uint prevPosIndex = getPixelIndex(prevPos, frameDim);
+    DIReservoir previousReservoir = gTemporalReservoir_DI[prevPosIndex];
+
+    int lightIndex;
+    float pHat = 0.f;
+    DIReservoir temporalReservoir = DIReservoir::makeEmpty();
+
+    lightIndex = inputReservoir.lightIndex;
+    pHat = luminance(evalDirectAnalytic(shadingData, materialInstance, false, sampleGenerator, lightIndex));
+    temporalReservoir.merge(inputReservoir, pHat, sampleNext1D(sampleGenerator));
+
+    if (!gInitialSamples)
+    {
+        lightIndex = previousReservoir.lightIndex;
+        pHat = luminance(evalDirectAnalytic(shadingData, materialInstance, false, sampleGenerator, lightIndex));
+        temporalReservoir.M = min(temporalReservoir.M, 20 * inputReservoir.M);
+        temporalReservoir.merge(previousReservoir, pHat, sampleNext1D(sampleGenerator));
+    }
+
+    lightIndex = temporalReservoir.lightIndex;
+    pHat = luminance(evalDirectAnalytic(shadingData, materialInstance, false, sampleGenerator, lightIndex));
+    temporalReservoir.finalize(pHat);
+
+    return temporalReservoir;
+}
+
+GIReservoir giTemporalResampling(uint2 pixel, uint2 frameDim, GIReservoir inputReservoir, inout SampleGenerator sampleGenerator)
+{
+    uint pixelIndex = getPixelIndex(pixel, frameDim);
+    ShadingData inputShadingData;
+    IMaterialInstance inputMaterialInstance;
+    getShadingDataAndMaterial(inputShadingData, inputMaterialInstance, pixel, frameDim);
+
+    int2 prevPos = pixel + int2(gMotionVector[pixel].xy * frameDim);
+
+    GIReservoir temporalReservoir;
+    bool foundTemporalReservoir = false;
+
+    if (all(prevPos >= 0) && all(prevPos < frameDim))
+    {
+        uint prevIdx = getPixelIndex(prevPos, frameDim);
+        temporalReservoir = gTemporalReservoir_GI[prevIdx];
+
+        // Geometric similarity
+        bool geometricSimilarity = validateGeometricSimilarity(
+            inputReservoir.visiblePoint,
+            inputReservoir.visibleNormal,
+            temporalReservoir.visiblePoint,
+            temporalReservoir.visibleNormal,
+            gScene.camera.data.viewProjMatNoJitter,
+            false
+        );
+
+        foundTemporalReservoir = geometricSimilarity && temporalReservoir.isValid();
+    }
+    GIReservoir curReservoir = GIReservoir::makeEmpty();
+
+    float selectedTargetPdf = 0;
+    if (inputReservoir.isValid())
+    {
+        selectedTargetPdf =
+            getTargetPdfForSurface(inputShadingData, inputMaterialInstance, inputReservoir.samplePoint, inputReservoir.sampleRadiance);
+        curReservoir.merge(inputReservoir, selectedTargetPdf, 0.5f);
+    }
+
+    if (foundTemporalReservoir)
+    {
+        temporalReservoir.M = min(temporalReservoir.M, kMaxM);
+    }
+
+    bool selectedPreviousSample = false;
+    if (!gInitialSamples && foundTemporalReservoir)
+    {
+        ShadingData shadingData;
+        IMaterialInstance materialInstance;
+        getShadingDataAndMaterial(shadingData, materialInstance, prevPos, frameDim);
+        float targetPdf =
+            getTargetPdfForSurface(shadingData, inputMaterialInstance, temporalReservoir.samplePoint, temporalReservoir.sampleRadiance);
+        selectedPreviousSample = curReservoir.merge(temporalReservoir, targetPdf, sampleNext1D(sampleGenerator));
+        if (selectedPreviousSample)
+        {
+            selectedTargetPdf = targetPdf;
+        }
+    }
+
+    float normalizationNumerator = 1.f;
+    float normalizationDenominator = selectedTargetPdf * curReservoir.M;
+    curReservoir.finalize(normalizationNumerator, normalizationDenominator);
+
+    return curReservoir;
+}
+
 [shader("raygeneration")]
 void rayGen()
 {
@@ -262,12 +378,21 @@ void rayGen()
     uint2 frameDim = DispatchRaysDimensions().xy;
     uint pixelIndex = getPixelIndex(pixel, frameDim);
 
+    SampleGenerator sampleGenerator = SampleGenerator(pixel, gFrameCount);
+
     DIReservoir diReservoir;
     GIReservoir giReservoir;
-    float3 diRadiance = tracePath(pixel, frameDim, diReservoir, giReservoir);
+    float3 diRadiance = tracePath(pixel, frameDim, diReservoir, giReservoir, sampleGenerator);
 
-    gInitialSamplesReservoir_DI[pixelIndex] = diReservoir;
-    gInitialSamplesReservoir_GI[pixelIndex] = giReservoir;
+    if (gEnableTemporal)
+    {
+        gSpatialReservoir_DI[pixelIndex] = diTemporalResampling(pixel, frameDim, diReservoir, sampleGenerator);
+        gSpatialReservoir_GI[pixelIndex] = giTemporalResampling(pixel, frameDim, giReservoir, sampleGenerator);
+    }
+    else
+    {
+        gSpatialReservoir_DI[pixelIndex] = diReservoir;
+        gSpatialReservoir_GI[pixelIndex] = giReservoir;
+    }
 
-    gDirectLightRadiance[pixel] = float4(diRadiance, 1.f);
 }

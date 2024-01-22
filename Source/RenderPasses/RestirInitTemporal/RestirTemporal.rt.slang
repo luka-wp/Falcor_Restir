@@ -25,20 +25,6 @@ cbuffer CB
 static const uint kMaxM = 30;
 static const uint kMaxAge = 50;
 
-int2 temporalResamplingOffset(int sampleIdx, int radius)
-{
-    sampleIdx &= 7;
-
-    int mask2 = sampleIdx >> 1 & 0x01;       // 0, 0, 1, 1, 0, 0, 1, 1
-    int mask4 = 1 - (sampleIdx >> 2 & 0x01); // 1, 1, 1, 1, 0, 0, 0, 0
-    int tmp0 = -1 + 2 * (sampleIdx & 0x01);  // -1, 1,....
-    int tmp1 = 1 - 2 * mask2;                // 1, 1,-1,-1, 1, 1,-1,-1
-    int tmp2 = mask4 | mask2;                // 1, 1, 1, 1, 0, 0, 1, 1
-    int tmp3 = mask4 | (1 - mask2);          // 1, 1, 1, 1, 1, 1, 0, 0
-
-    return int2(tmp0, tmp0 * tmp1) * int2(tmp2, tmp3) * radius;
-}
-
 DIReservoir diTemporalResampling(uint2 pixel, uint2 frameDim, DIReservoir inputReservoir, inout SampleGenerator sampleGenerator)
 {
     uint pixelIndex = getPixelIndex(pixel, frameDim);

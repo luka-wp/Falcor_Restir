@@ -61,6 +61,12 @@ private:
     };
 
     /* >> ReSTIR 3 >>*/
+    void prepareInitSamplesAndTemporalProgram();
+    void prepareSpatialResamplingAndFinalizeProgram();
+
+    void executeInitSamplesAndTemporalProgram(RenderContext* pRenderContext, const RenderData& renderData);
+    void executeSpatialResamplingAndFinalizeProgram(RenderContext* pRenderContext, const RenderData& renderData);
+
     void executeInitSamples(RenderContext* pRenderContext, const RenderData& renderData);
     void prepareInitSamplesProgram();
 
@@ -73,15 +79,6 @@ private:
     void executeFinalize(RenderContext* pRenderContext, const RenderData& renderData);
     void prepareFinalizeProgram();
     /* << ReSTIR 3 <<*/
-
-    void executeInitTemporal(RenderContext* pRenderContext, const RenderData& renderData);
-    void prepareInitTemporalProgram();
-
-    void executeSpatialReuse(RenderContext* pRenderContext, const RenderData& renderData);
-    void prepareSpatialReuseProgram();
-
-    void executeUpdateShade(RenderContext* pRenderContext, const RenderData& renderData);
-    void prepareUpdateShadeProgram();
 
     void allocateReservoir(uint bufferX, uint bufferY);
     void prepareVars();
