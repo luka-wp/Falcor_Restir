@@ -119,6 +119,7 @@ private:
     PassTrace mTracerUpdateShade;
 
     /* >> ReSTIR 3 >>*/
+    uint2 mBufferDim = uint2(0, 0);
     ref<Texture> mpReservoirPrevious;
     ref<Texture> mpReservoirCurrent;
     ref<Texture> mpReservoirSpatial;

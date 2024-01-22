@@ -186,7 +186,9 @@ void RestirInitTemporal::execute(RenderContext* pRenderContext, const RenderData
 
     executeInitSamplesAndTemporalProgram(pRenderContext, renderData);
     executeSpatialResamplingAndFinalizeProgram(pRenderContext, renderData);
-    executeCopyTemporalProgram(pRenderContext, renderData);
+    mClearBuffers = false;
+
+    //executeCopyTemporalProgram(pRenderContext, renderData);
 
     //executeInitSamples(pRenderContext, renderData);
     //executeTemporal(pRenderContext, renderData);
@@ -598,11 +600,12 @@ void RestirInitTemporal::prepareFinalizeProgram()
 
 void RestirInitTemporal::allocateReservoir(uint bufferX, uint bufferY)
 {
-    bool allocate = mpReservoirPrevious == nullptr || mpReservoirCurrent == nullptr;
-    allocate = allocate || mpReservoirPrevious->getWidth() != bufferX || mpReservoirPrevious->getHeight() != bufferY;
+    bool allocate = mpTemporalReservoirOld_DI == nullptr;
+    allocate = allocate || mBufferDim.x != bufferX || mBufferDim.y != bufferY;
 
     if (allocate)
     {
+        mBufferDim = uint2(bufferX, bufferY);
         const uint sampleCount = bufferX * bufferY;
 
         // Initial samples

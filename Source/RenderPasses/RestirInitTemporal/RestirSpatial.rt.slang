@@ -158,17 +158,17 @@ void rayGen()
         giOutputReservoir = giSpatialResampling(pixel, frameDim, giInputReservoir, sampleGenerator);
     }
 
-    // // Save prev reservoirs to temporal buffer
-    // if (!gClearBuffers)
-    // {
-    //     gTemporalReservoir_DI[pixelIndex] = diInputReservoir;
-    //     gTemporalReservoir_GI[pixelIndex] = giInputReservoir;
-    // }
-    // else
-    // {
-    //     gTemporalReservoir_DI[pixelIndex] = DIReservoir::makeEmpty();
-    //     gTemporalReservoir_GI[pixelIndex] = GIReservoir::makeEmpty();
-    // }
+    // Save prev reservoirs to temporal buffer
+    if (!gClearBuffers)
+    {
+        gTemporalReservoir_DI[pixelIndex] = diInputReservoir;
+        gTemporalReservoir_GI[pixelIndex] = giInputReservoir;
+    }
+    else
+    {
+        gTemporalReservoir_DI[pixelIndex] = DIReservoir::makeEmpty();
+        gTemporalReservoir_GI[pixelIndex] = GIReservoir::makeEmpty();
+    }
 
     // Final shading
     float3 totalRadiance = float3(0.f);
