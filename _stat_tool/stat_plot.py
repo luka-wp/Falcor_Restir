@@ -1,4 +1,5 @@
 import json
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
@@ -56,34 +57,6 @@ def prepare_plot() -> tuple[Figure, Axes]:
     return (fig, ax)
 
 
-def create_plot(x_axes: list[list], y_axes: list[list], labels: list[str],
-                colors: list[str], title: str):
-
-    if len(x_axes) != len(y_axes) \
-            or len(x_axes) != len(labels) \
-            or len(x_axes) != len(colors):
-        print("Not equal num of entries")
-        return
-
-    (fig, ax) = prepare_plot()
-    ax.set_title(title)
-
-    num = len(x_axes)
-    for i in range(num):
-        x_axis = x_axes[i]
-        y_axis = y_axes[i]
-        label = labels[i]
-        color = colors[i]
-        ax.plot(x_axis, y_axis, color=color,
-                label=label, linestyle="-", marker=" ")
-
-    ax.legend()
-
-    plt.show()
-
-    return (fig, ax)
-
-
 def parse_file(file_path: str, event_type_keys: list[str]) -> list[DataSet]:
     # CPU, GPU, RayTrace CPU, RayTrace GPU
     with open(file_path) as file:
@@ -113,11 +86,17 @@ def plot_data_sets(data_sets: tuple[DataSet, DataSet], num_frames: int):
     blue_data = data_sets[0].records[blue_offset:]
     orange_data = data_sets[1].records[orange_offset:]
 
+    blue_max = max(blue_data)
+    orange_max = max(orange_data)
+    tick_max = max(blue_max, orange_max) + 5
+    yticks = np.arange(0, tick_max, 2)
+
     (fig, ax) = prepare_plot()
     ax.plot(x_axis, blue_data, label='Path Tracer',
             color='blue', linestyle='-', marker=' ')
     ax.plot(x_axis, orange_data, label='ReSTIR',
             color='orange', linestyle='-', marker=' ')
+    ax.yaxis.set_ticks(yticks)
     ax.legend()
     return (fig, ax)
 
