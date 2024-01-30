@@ -1,0 +1,4 @@
+Windows 10
+AMD Ryzen 7 5800H 3.20 GHz
+16 GB Ram
+NVIDIA GeForce RTX 3060 6GB 130W
