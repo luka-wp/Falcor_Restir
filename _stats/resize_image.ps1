@@ -1,0 +1,1 @@
+Get-ChildItem -Recurse | Where-Object -Property Name -Like "*.png" | ForEach-Object { $Item = (Get-Item $_.FullName); $Output = $Item.DirectoryName + "\" + $Item.BaseName + ".jpg"; ffmpeg.exe -y -i $Item.FullName -vf scale=854:480 $Output }
